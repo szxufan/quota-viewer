@@ -55,7 +55,8 @@ var DefaultProviderIDs = []string{"kimi", "xfyun", "opencode-go"} // 默认启�
 - 有值的旧字段 → 对应 Provider `enabled=true` + 凭证迁移（mimo_cookie 也会迁移保留）
 - 旧字段全空 → 默认启用前三个
 - 迁移后立即回写新格式（`_ = Save(cfg)`，失败静默）
-- 4 个以上有值 → 钳制：按注册表顺序保留前 3 个 enabled，其余凭证保留但关闭
+- 有凭证的 Provider 统一升级为 `keys` 模型（单组），`creds` 清空
+- 不限制启用数量（原"保留前 3"钳制已移除）
 
 ### 存储位置
 
@@ -90,14 +91,14 @@ $session.Cookies.Add((New-Object System.Net.Cookie("name", "value", "/", "domain
 |---|---|
 | `internal/config/config.go` | Config/ProviderConfig 结构、Default、Load（含迁移）、Save |
 | `internal/config/cookie.go` | NormalizeCookieInput + PS 转义还原 |
-| `internal/config/config_test.go` | 默认值、往返、旧格式迁移（含 mimo_cookie）用例 |
-| `app.go` | GetConfig 掩码、SaveConfig 钳制与空串语义 |
+| `internal/config/config_test.go` | 默认值、往返（含多组 keys）、旧格式迁移（含 mimo_cookie）用例 |
+| `app.go` | GetConfig 掩码、SaveConfig 多组 keys 合并与空串语义 |
 
 ---
 
 ## Must NOT Change
 
 - `providers` 结构变更 = 破坏性变更；迁移逻辑在 config.Load 内,改结构必须同步迁移
-- `SaveConfig` 的空凭证"不修改"语义——前端掩码回显依赖它
+- `SaveConfig` 的空凭证"不修改"语义——前端掩码回显依赖它（keys 组数相同按索引合并,组数不同全量替换）
 - Cookie 输入规范化必须始终经过 `NormalizeCookieInput`（xfyun 与 mimo 都走它）
-- 展示上限 3 / 下限 1:config 迁移与 app.SaveConfig 双处钳制
+- 启用下限 1、无上限；凭证统一以 `keys` 为单一数据源（`creds` 仅兼容旧配置读取）

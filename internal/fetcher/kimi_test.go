@@ -59,6 +59,9 @@ func TestKimiFetcher_NestedResponse_Parses5hWindow(t *testing.T) {
 	if !strings.Contains(result.Remaining, "5小时") {
 		t.Errorf("expected '5小时' in Remaining, got '%s'", result.Remaining)
 	}
+	if !strings.Contains(result.Remaining, "(周)") {
+		t.Errorf("expected weekly quota '(周)' in Remaining, got '%s'", result.Remaining)
+	}
 	if result.ResetAt != "2026-07-17T16:13:12.634389Z" {
 		t.Errorf("expected 5h reset time, got '%s'", result.ResetAt)
 	}

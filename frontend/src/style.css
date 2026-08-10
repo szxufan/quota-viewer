@@ -85,6 +85,18 @@ html, body {
 .ball-cell.yellow { color: var(--yellow); }
 .ball-cell.red { color: var(--red); }
 
+/* 网格模式(>3 个 key):按 --cols/--rows 均分,JS 标记首行/首列去掉分隔线 */
+.ball.grid { flex-wrap: wrap; }
+.ball.grid .ball-cell {
+    flex: none;
+    width: calc(100% / var(--cols, 3));
+    height: calc(100% / var(--rows, 3));
+    border-left: 1px solid var(--hairline);
+    border-top: 1px solid var(--hairline);
+}
+.ball.grid .ball-cell.first-col { border-left: none; }
+.ball.grid .ball-cell.first-row { border-top: none; }
+
 /* === 面板外壳(详情 / 配置共用) === */
 .panel, .settings {
     width: 340px;
@@ -147,7 +159,17 @@ html, body {
 .icon-btn svg { width: 15px; height: 15px; }
 
 /* === 额度列表 === */
-.quota-list { padding: 6px 14px; }
+.quota-list {
+    padding: 6px 14px;
+    overflow-y: auto; /* max-height 由 JS 按窗口高度动态设置,超高时内部滚动 */
+}
+.quota-list::-webkit-scrollbar { width: 8px; }
+.quota-list::-webkit-scrollbar-track { background: transparent; }
+.quota-list::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.14);
+    border-radius: 4px;
+}
+.quota-list::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.22); }
 
 .quota-item {
     padding: 10px 0;
@@ -184,12 +206,34 @@ html, body {
     color: var(--text-2);
     font-size: 12px;
     font-variant-numeric: tabular-nums;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    white-space: pre-line; /* 多窗口数据按行展示 */
     max-width: 210px;
 }
 .quota-item.error .quota-remaining { color: var(--red); }
+.error-text { color: var(--red); }
+
+/* === 多 key 横向分割 === */
+.quota-key-cells { display: flex; align-items: stretch; }
+.quota-key-cell { flex: 1; min-width: 0; }
+.quota-key-cell + .quota-key-cell {
+    padding-left: 12px;
+    border-left: 1px solid var(--hairline);
+}
+.quota-key-cell .quota-key-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+    margin-bottom: 7px;
+}
+.quota-key-label {
+    flex: none;
+    font-size: 11px;
+    color: var(--text-3);
+    font-variant-numeric: tabular-nums;
+}
+.quota-key-cell .quota-remaining { max-width: 100%; }
+.quota-key-count { color: var(--text-3); font-size: 11px; }
 
 .progress-bar {
     height: 4px;
@@ -249,7 +293,7 @@ html, body {
 /* === 配置面板 === */
 .settings-body {
     padding: 14px;
-    max-height: 432px;
+    /* max-height 由 JS 按窗口高度动态设置(resizeSettings),超屏时启用内部滚动 */
     overflow-y: auto;
 }
 .settings-body::-webkit-scrollbar { width: 8px; }
@@ -355,6 +399,24 @@ html, body {
 .provider-fields { margin-top: 8px; }
 .provider-fields .form-group { margin-bottom: 8px; }
 .provider-fields .form-group:last-child { margin-bottom: 0; }
+
+/* === 多凭证组 === */
+.provider-groups { margin-top: 8px; }
+.provider-group {
+    padding: 8px;
+    border: 1px solid var(--hairline);
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.02);
+}
+.provider-group + .provider-group { margin-top: 10px; }
+.provider-group-label {
+    font-size: 11px;
+    color: var(--text-3);
+    margin-bottom: 6px;
+}
+.provider-group .provider-fields { margin-top: 0; }
+.del-cred { margin-top: 8px; width: 100%; }
+.add-cred { margin-bottom: 10px; width: 100%; }
 
 /* 单格球:字母放大占满整个球 */
 .ball.single-cell .ball-cell { font-size: 20px; }

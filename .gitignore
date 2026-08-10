@@ -1,2 +1,7 @@
+# 构建产物
 build/bin
+frontend/dist
+frontend/wailsjs
+
+# 依赖
 node_modules

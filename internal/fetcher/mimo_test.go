@@ -121,16 +121,87 @@ func TestMiMoFetcher_JSONResponse_MonthUsage_FallbackPercent(t *testing.T) {
 	}
 }
 
-func TestMiMoFetcher_JSONNoUsageData_ReturnsError(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+func TestMiMoFetcher_NoUsageData_FallsBackToBalance(t *testing.T) {
+	// usage 无有效数据时,回退查询 /api/v1/balance 并像 DeepSeek 一样展示余额
+	usageServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte(`{"code":0,"data":{"usage":{"percent":0,"items":[]}}}`))
 	}))
-	defer server.Close()
+	defer usageServer.Close()
 
-	f := NewMiMoFetcher("session=abc", server.URL)
+	balanceServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/balance" {
+			t.Errorf("expected balance path, got '%s'", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"code":0,"data":{"balance":"247.51","cashBalance":"200","giftBalance":"47.51","currency":"CNY"}}`))
+	}))
+	defer balanceServer.Close()
+
+	f := NewMiMoFetcher("session=abc", usageServer.URL)
+	f.balanceURL = balanceServer.URL + "/api/v1/balance"
+	result := f.Fetch()
+	if result.Error != "" {
+		t.Fatalf("unexpected error: %s", result.Error)
+	}
+	if result.Kind != KindBalance {
+		t.Errorf("expected Kind=balance, got '%s'", result.Kind)
+	}
+	if result.Balance != 247.51 {
+		t.Errorf("expected Balance=247.51, got %f", result.Balance)
+	}
+	if result.Currency != "CNY" {
+		t.Errorf("expected Currency=CNY, got '%s'", result.Currency)
+	}
+	if !strings.Contains(result.Remaining, "余额") || !strings.Contains(result.Remaining, "247.51") {
+		t.Errorf("expected balance display in Remaining, got '%s'", result.Remaining)
+	}
+}
+
+func TestMiMoFetcher_BalanceNumericField_AlsoParses(t *testing.T) {
+	// balance 字段也可能是数字形式,应同样兼容
+	usageServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"code":0,"data":{"usage":{"percent":0,"items":[]}}}`))
+	}))
+	defer usageServer.Close()
+
+	balanceServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"code":0,"data":{"balance":100,"currency":"CNY"}}`))
+	}))
+	defer balanceServer.Close()
+
+	f := NewMiMoFetcher("session=abc", usageServer.URL)
+	f.balanceURL = balanceServer.URL + "/api/v1/balance"
+	result := f.Fetch()
+	if result.Error != "" {
+		t.Fatalf("unexpected error: %s", result.Error)
+	}
+	if result.Balance != 100 {
+		t.Errorf("expected Balance=100, got %f", result.Balance)
+	}
+	if !strings.Contains(result.Remaining, "100") {
+		t.Errorf("expected '100' in Remaining, got '%s'", result.Remaining)
+	}
+}
+
+func TestMiMoFetcher_NoUsageData_BalanceFails_ReturnsError(t *testing.T) {
+	usageServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"code":0,"data":{"usage":{"percent":0,"items":[]}}}`))
+	}))
+	defer usageServer.Close()
+
+	balanceServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(500)
+	}))
+	defer balanceServer.Close()
+
+	f := NewMiMoFetcher("session=abc", usageServer.URL)
+	f.balanceURL = balanceServer.URL + "/api/v1/balance"
 	result := f.Fetch()
 	if result.Error == "" {
-		t.Error("expected error when JSON has no usage data")
+		t.Error("expected error when usage has no data and balance fails")
 	}
 }

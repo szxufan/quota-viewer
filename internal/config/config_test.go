@@ -61,9 +61,14 @@ func TestSaveThenLoad_RoundTrip(t *testing.T) {
 
 	original := &Config{
 		Providers: []ProviderConfig{
-			{ID: "kimi", Enabled: true, Creds: map[string]string{"api_key": "k1"}},
+			{ID: "kimi", Enabled: true, Keys: []map[string]string{
+				{"api_key": "k1"},
+				{"api_key": "k2"},
+			}},
 			{ID: "xfyun", Enabled: false},
-			{ID: "opencode-go", Enabled: true, Creds: map[string]string{"workspace_id": "w1", "session_token": "s1"}},
+			{ID: "opencode-go", Enabled: true, Keys: []map[string]string{
+				{"workspace_id": "w1", "session_token": "s1"},
+			}},
 			{ID: "mimo", Enabled: false},
 			{ID: "deepseek", Enabled: true, Creds: map[string]string{"api_key": "d1"}, Budget: 500.00},
 		},
@@ -95,9 +100,15 @@ func TestSaveThenLoad_RoundTrip(t *testing.T) {
 		if p.ID != o.ID || p.Enabled != o.Enabled {
 			t.Errorf("Providers[%d] mismatch: got %+v, want %+v", i, p, o)
 		}
-		for k, v := range o.Creds {
-			if p.Creds[k] != v {
-				t.Errorf("Providers[%d].Creds[%s] mismatch: got %s, want %s", i, k, p.Creds[k], v)
+		gotKeys, wantKeys := p.CredKeys(), o.CredKeys()
+		if len(gotKeys) != len(wantKeys) {
+			t.Errorf("Providers[%d] Keys count mismatch: got %d, want %d", i, len(gotKeys), len(wantKeys))
+		}
+		for gi, gk := range gotKeys {
+			for k, v := range wantKeys[gi] {
+				if gk[k] != v {
+					t.Errorf("Providers[%d].Keys[%d][%s] mismatch: got %s, want %s", i, gi, k, gk[k], v)
+				}
 			}
 		}
 		if p.Budget != o.Budget {
@@ -151,22 +162,21 @@ func TestLoad_MigrateLegacyJSON(t *testing.T) {
 		byID[p.ID] = p
 	}
 
-	if !byID["kimi"].Enabled || byID["kimi"].Creds["api_key"] != "k" {
+	if !byID["kimi"].Enabled || byID["kimi"].CredKeys()[0]["api_key"] != "k" {
 		t.Errorf("kimi migrate wrong: %+v", byID["kimi"])
 	}
-	if !byID["xfyun"].Enabled || byID["xfyun"].Creds["cookie"] != "x" {
+	if !byID["xfyun"].Enabled || byID["xfyun"].CredKeys()[0]["cookie"] != "x" {
 		t.Errorf("xfyun migrate wrong: %+v", byID["xfyun"])
 	}
-	// mimo 有凭证但被钳制(4 个 enabled 超上限,按注册表顺序保留前 3):
-	// 凭证保留,enabled 为 false,用户可在设置中重新启用
-	if byID["mimo"].Enabled {
-		t.Errorf("mimo should be clamped to disabled (4 enabled > 3): %+v", byID["mimo"])
+	// mimo 有凭证:不再钳制,保持 enabled,凭证迁移为 Keys 单组
+	if !byID["mimo"].Enabled {
+		t.Errorf("mimo should stay enabled after migration: %+v", byID["mimo"])
 	}
-	if byID["mimo"].Creds["cookie"] != "session=abc" {
-		t.Errorf("mimo creds should survive clamping: %+v", byID["mimo"])
+	if keys := byID["mimo"].CredKeys(); len(keys) != 1 || keys[0]["cookie"] != "session=abc" {
+		t.Errorf("mimo creds should migrate to Keys: %+v", byID["mimo"])
 	}
 	oc := byID["opencode-go"]
-	if !oc.Enabled || oc.Creds["workspace_id"] != "ws1" || oc.Creds["session_token"] != "tok1" {
+	if !oc.Enabled || oc.CredKeys()[0]["workspace_id"] != "ws1" || oc.CredKeys()[0]["session_token"] != "tok1" {
 		t.Errorf("opencode-go migrate wrong: %+v", oc)
 	}
 	// deepseek 无旧字段 → 不启用
@@ -224,5 +234,26 @@ func TestLoad_MigrateLegacyEmpty_ReturnsDefaults(t *testing.T) {
 	}
 	if enabledCount != 3 {
 		t.Errorf("expected 3 default enabled providers, got %d", enabledCount)
+	}
+}
+
+// CredKeys 兼容性:Keys 优先;无 Keys 时 Creds 视为单组;均空返回 nil。
+func TestCredKeys_Compat(t *testing.T) {
+	// Keys 有值 → 返回 Keys
+	p := ProviderConfig{Keys: []map[string]string{{"api_key": "a"}, {"api_key": "b"}}}
+	if keys := p.CredKeys(); len(keys) != 2 || keys[1]["api_key"] != "b" {
+		t.Errorf("expected Keys passthrough, got %+v", keys)
+	}
+
+	// 无 Keys、有 Creds → 视为单组
+	p = ProviderConfig{Creds: map[string]string{"api_key": "x"}}
+	if keys := p.CredKeys(); len(keys) != 1 || keys[0]["api_key"] != "x" {
+		t.Errorf("expected single group from Creds, got %+v", keys)
+	}
+
+	// 均空 → nil
+	p = ProviderConfig{}
+	if keys := p.CredKeys(); keys != nil {
+		t.Errorf("expected nil, got %+v", keys)
 	}
 }

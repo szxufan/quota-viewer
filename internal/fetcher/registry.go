@@ -63,8 +63,9 @@ var registry = []ProviderDef{
 		ID:          "mimo",
 		DisplayName: "小米 MiMo",
 		Abbr:        "M",
-		Kind:        KindUsage,
-		LoginURL:    "https://platform.xiaomimimo.com/console/plan-manage",
+		// 支持按量余额(usage 无套餐数据时回退),因此按余额型展示并允许设置预算
+		Kind:     KindBalance,
+		LoginURL: "https://platform.xiaomimimo.com/console/plan-manage",
 		Fields: []CredentialField{
 			{Key: "cookie", Label: "Cookie(浏览器 F12 复制)", Type: "textarea"},
 		},

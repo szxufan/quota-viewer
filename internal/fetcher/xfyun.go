@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/cookiejar"
+	"strings"
 	"time"
 )
 
@@ -116,7 +117,7 @@ func (x *XfyunFetcher) Fetch() QuotaResult {
 		return result
 	}
 
-	// 取第一条套餐;展示套餐总量
+	// 取第一条套餐;展示 5小时/周/总量 全部窗口
 	row := body.Data.Rows[0]
 	dto := row.CodingPlanUsageDTO
 
@@ -127,7 +128,16 @@ func (x *XfyunFetcher) Fetch() QuotaResult {
 	if limit > 0 {
 		result.Percent = used / limit * 100
 	}
-	result.Remaining = fmt.Sprintf("%s / %s 次 (总量)", formatNum(used), formatNum(limit))
+
+	var lines []string
+	if dto.RP5hLimit > 0 {
+		lines = append(lines, fmt.Sprintf("%s / %s 次 (5小时)", formatNum(dto.RP5hUsage), formatNum(dto.RP5hLimit)))
+	}
+	if dto.RPwLimit > 0 {
+		lines = append(lines, fmt.Sprintf("%s / %s 次 (周)", formatNum(dto.RPwUsage), formatNum(dto.RPwLimit)))
+	}
+	lines = append(lines, fmt.Sprintf("%s / %s 次 (总量)", formatNum(used), formatNum(limit)))
+	result.Remaining = strings.Join(lines, "\n")
 	result.ResetAt = row.ExpiresAt
 
 	return result

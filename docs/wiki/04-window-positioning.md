@@ -44,10 +44,18 @@ workAreaForPoint(px, py) → (x, y, w, h, dpi, ok)   [workarea_windows.go:106]
 
 | 常量 | 值 | 位置 |
 |---|---|---|
-| `ballSize` | 60 | app.go:198（与前端 SIZES.ball 一致） |
-| `screenMargin` | 8 | app.go:201（面板与屏幕边缘间距） |
+| `ballSize` | 60（包级变量，运行时随渠道数变化） | app.go（与前端 SIZES.ball 一致） |
+| `ballSizeMin` | 60 | app.go |
+| `screenMargin` | 8 | app.go（面板与屏幕边缘间距） |
 | `monitorDefaultToNearest` | 2 | workarea_windows.go |
 | `mdtEffectiveDPI` | 0 | workarea_windows.go |
+
+### 动态球尺寸
+
+- 球窗口尺寸不再固定：前端渲染完球网格后调用 `App.SetBallSize(size)`（[app.go]），后端更新包级 `ballSize`、`WindowSetMinSize` + `WindowSetSize`，再 `fitToScreen` 校正位置
+- `WM_GETMINMAXINFO` 子类回调读取同一包级 `ballSize`，最小拖动尺寸始终跟随球尺寸
+- 网格规则（前端 main.js updateBall）：1-3 单行 60×60；4 个 2×2；≥5 按 `ceil(sqrt(n))` 方形扩展，边长 = `max(60, cols*22)`
+- 展开面板高度由前端按内容自适应：`resizePanel()` 读 DOM `offsetHeight` 后调 `ExpandWindow(340, h)`
 
 ### 已知坑
 
@@ -69,6 +77,6 @@ workAreaForPoint(px, py) → (x, y, w, h, dpi, ok)   [workarea_windows.go:106]
 
 ## Must NOT Change
 
-- `ballSize`=60 与前端 `SIZES.ball` 必须一致
+- `ballSize`（包级变量）与前端 `SIZES.ball` 必须一致;`SetBallSize` 更新时必须同步 `WindowSetMinSize`
 - fitToScreen 的返回值语义：**工作区相对坐标**（调用方直接传 WindowSetPosition）
 - 窗口状态机：`expanded` 标志 + `savedX/savedY`（展开前球位）——收起必须还原球位

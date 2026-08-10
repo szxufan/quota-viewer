@@ -102,6 +102,9 @@ func TestXfyunFetcher_JSONResponse_ParsesPackageTotal(t *testing.T) {
 	if !strings.Contains(result.Remaining, "总量") {
 		t.Errorf("expected '总量' in Remaining, got '%s'", result.Remaining)
 	}
+	if !strings.Contains(result.Remaining, "5小时") || !strings.Contains(result.Remaining, "(周)") {
+		t.Errorf("expected 5h and weekly windows in Remaining, got '%s'", result.Remaining)
+	}
 	if result.ResetAt != "2026-10-16 10:07:39" {
 		t.Errorf("expected ResetAt, got '%s'", result.ResetAt)
 	}

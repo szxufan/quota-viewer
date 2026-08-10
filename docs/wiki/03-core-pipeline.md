@@ -19,12 +19,11 @@
 ```
 App.Refresh()                          [app.go:101]
  └─ fetchAll()                         [app.go:303]
-     └─ 遍历 cfg.Providers 中 enabled 的(最多 3 个,注册表顺序)
-         ├─ goroutine1: registry["kimi"].Build(creds).Fetch()
-         ├─ goroutine2: registry["xfyun"].Build(creds).Fetch()
-         └─ goroutine3: registry["opencode-go"].Build(creds).Fetch()
-     （sync.WaitGroup 并发,按启用顺序写 results[i])
-     → 每个结果补 ID/Abbr,Kind 默认 "usage"
+     └─ 遍历 cfg.Providers 中 enabled 的(全部,注册表顺序)
+         └─ 每个 Provider 的每组成凭证(Keys,单组即 1 组)各起一个 goroutine:
+             registry[id].Build(creds).Fetch() → 结果带 KeyIndex(组序号)
+     （sync.WaitGroup 并发,按注册表顺序 × 组顺序写 results[i])
+     → 每个结果补 ID/Abbr/KeyIndex,Kind 默认 "usage"
  └─ 加锁写 a.cache
  └─ EventsEmit("quota:update", results)   → 前端
 ```
@@ -35,19 +34,23 @@ App.Refresh()                          [app.go:101]
 
 ```
 监听 window.runtime.EventsOn("quota:update")
- └─ updateBall(results)     按结果数动态重建球格(1 格占满/2 格各半/3 格各 1/3)
+ └─ renderResults(results)  按 provider id 分组,组内多 key 横向分割(Key 1/2/3)
+                            每组状态色取最差(red>yellow>green);面板按内容自适应高度
+ └─ updateBall(results)     每个 key 一个球格;网格规则:
+                            1-3 单行 60×60 / 4 个 2×2 / ≥5 按 ceil(sqrt(n)) 方形扩展(边长=max(60,cols*22))
+                            收起态下调 App.SetBallSize(size) 同步窗口尺寸
                             颜色: green / yellow / red;余额型(kind=balance)有余额即绿
- └─ updatePanel(results)    展开面板进度条 + 千分位数字 + 重置时间
-状态: ball(收起) ⇄ panel(展开)，SIZES.ball=60
+状态: ball(收起) ⇄ panel(展开)，球尺寸动态;SIZES.panel 高度为最小值
 ```
 
 ### 配置保存链路
 
 ```
 前端 保存按钮 → App.SaveConfig(providers, refreshMin)   [app.go]
-  providers: [{id, enabled, creds:{字段:输入值}}]
-  → 后端钳制:0 个启用 → 全部启用;>3 → 保留前 3
-  → 空字符串 creds = 不修改(避免掩码覆盖)
+  providers: [{id, enabled, keys:[{字段:输入值},...], budget}]
+  → 后端钳制:0 个启用 → 全部启用(数量无上限)
+  → 凭证合并:keys 组数与旧 Keys 相同 → 按索引逐字段合并(空字段=不修改);
+    组数不同 → 全量替换;全空组跳过
   → 所有凭证值过 NormalizeCookieInput(非 PS 格式原样返回)
   → 按注册表顺序重排 → config.Save() 写 %APPDATA%/quota-viewer/config.json
 ```

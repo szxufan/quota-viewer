@@ -16,10 +16,22 @@ type Config struct {
 
 // ProviderConfig 描述单个 Provider 的启用状态与凭证。
 type ProviderConfig struct {
-	ID      string            `json:"id"`
-	Enabled bool              `json:"enabled"`
-	Creds   map[string]string `json:"creds,omitempty"`
-	Budget  float64           `json:"budget,omitempty"` // 余额型 Provider 的预算总量(0 = 未设)
+	ID      string              `json:"id"`
+	Enabled bool                `json:"enabled"`
+	Creds   map[string]string   `json:"creds,omitempty"` // 旧版单凭证(兼容读取;保存后统一升级为 Keys)
+	Keys    []map[string]string `json:"keys,omitempty"`  // 多组凭证(每组一套字段值);空 = 未配置多 key
+	Budget  float64             `json:"budget,omitempty"` // 余额型 Provider 的预算总量(0 = 未设)
+}
+
+// CredKeys 返回凭证组列表:优先 Keys;否则旧 Creds 视为单组;均空返回 nil。
+func (p ProviderConfig) CredKeys() []map[string]string {
+	if len(p.Keys) > 0 {
+		return p.Keys
+	}
+	if len(p.Creds) > 0 {
+		return []map[string]string{p.Creds}
+	}
+	return nil
 }
 
 // AllProviderIDs 全部已知 Provider id(与 fetcher 注册表一致,顺序 = 展示顺序)。
@@ -165,14 +177,11 @@ func migrateFromLegacy(l legacyConfig) *Config {
 	}
 	set("opencode-go", len(oc) > 0, oc)
 
-	// 钳制最多 3 个启用(展示上限)
-	enabledCount := 0
+	// 有凭证的 Provider 统一升级为 Keys 模型(单组),Creds 清空
 	for i := range cfg.Providers {
-		if cfg.Providers[i].Enabled {
-			enabledCount++
-			if enabledCount > 3 {
-				cfg.Providers[i].Enabled = false
-			}
+		if len(cfg.Providers[i].Creds) > 0 {
+			cfg.Providers[i].Keys = []map[string]string{cfg.Providers[i].Creds}
+			cfg.Providers[i].Creds = nil
 		}
 	}
 

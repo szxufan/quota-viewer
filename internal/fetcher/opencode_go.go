@@ -36,11 +36,11 @@ type windowInfo struct {
 	resetInSec   int
 }
 
-// windowTypeOrder 用于 tiebreaker: 相同百分比时 rolling > weekly > monthly。
+// windowTypeOrder 用于 tiebreaker: 相同百分比时 rolling < weekly < monthly(monthly 优先级最高)。
 var windowTypeOrder = map[string]int{
-	"rolling": 0,
+	"rolling": 2,
 	"weekly":  1,
-	"monthly": 2,
+	"monthly": 0,
 }
 
 // windowLabel 窗口类型的中文描述。
@@ -135,11 +135,6 @@ func (f *OpenCodeGoFetcher) Fetch() QuotaResult {
 	// 1) 尝试 SSR hydration 数据
 	windows := parseSSRWindows(string(body))
 	if len(windows) == 0 {
-		// SSR 模式匹配成功但所有窗口 usagePercent=0 → 无有效窗口
-		if ssrPattern.MatchString(string(body)) {
-			result.Error = "未找到有效配额窗口"
-			return result
-		}
 		// 2) 回退到 data-slot HTML 解析
 		windows = parseSlotWindows(string(body))
 	}
@@ -149,7 +144,7 @@ func (f *OpenCodeGoFetcher) Fetch() QuotaResult {
 		return result
 	}
 
-	// 选取 usagePercent 最高的窗口; 相同则 rolling > weekly > monthly
+	// 主窗口: usagePercent 最高的窗口; 相同则 rolling > weekly > monthly
 	best := windows[0]
 	for _, w := range windows[1:] {
 		if w.usagePercent > best.usagePercent ||
@@ -159,14 +154,20 @@ func (f *OpenCodeGoFetcher) Fetch() QuotaResult {
 	}
 
 	result.Percent = float64(best.usagePercent)
-	result.Remaining = fmt.Sprintf("%s · 已用 %d%% · 剩余 %d%%",
-		windowLabel(best.windowType), best.usagePercent, 100-best.usagePercent)
+	// 所有解析到的窗口全部展示
+	var lines []string
+	for _, w := range windows {
+		lines = append(lines, fmt.Sprintf("%s · 已用 %d%% · 剩余 %d%%",
+			windowLabel(w.windowType), w.usagePercent, 100-w.usagePercent))
+	}
+	result.Remaining = strings.Join(lines, "\n")
 	result.ResetAt = time.Now().Add(time.Duration(best.resetInSec) * time.Second).Format(time.RFC3339)
 
 	return result
 }
 
 // parseSSRWindows 从 HTML 中解析 SSR hydration 配额窗口数据。
+// usagePercent=0(额度未使用)也是有效窗口,一并返回;仅当字段缺失时跳过。
 func parseSSRWindows(html string) []windowInfo {
 	matches := ssrPattern.FindAllStringSubmatch(html, -1)
 	if len(matches) == 0 {
@@ -177,25 +178,28 @@ func parseSSRWindows(html string) []windowInfo {
 	for _, m := range matches {
 		wt := m[1]
 		inner := m[2]
-		percent, resetSec := parseSSRFields(inner)
-		if percent > 0 {
-			windows = append(windows, windowInfo{
-				windowType:   wt,
-				usagePercent: percent,
-				resetInSec:   resetSec,
-			})
+		percent, resetSec, hasPercent := parseSSRFields(inner)
+		if !hasPercent {
+			continue // 无 usagePercent 字段 = 结构异常,跳过
 		}
+		windows = append(windows, windowInfo{
+			windowType:   wt,
+			usagePercent: percent,
+			resetInSec:   resetSec,
+		})
 	}
 	return windows
 }
 
 // parseSSRFields 解析 SSR 窗口数据内部的 key=value 对。
-// 内部格式: usagePercent:7,resetInSec:18000 (顺序不固定)
-func parseSSRFields(inner string) (percent int, resetSec int) {
+// 内部格式: status:"ok",usagePercent:7,resetInSec:18000 (顺序不固定)
+// 返回 hasPercent: 是否存在 usagePercent 字段(区分真实 0% 与字段缺失)。
+func parseSSRFields(inner string) (percent int, resetSec int, hasPercent bool) {
 	for _, part := range strings.Split(inner, ",") {
 		part = strings.TrimSpace(part)
 		if strings.HasPrefix(part, "usagePercent:") {
 			percent, _ = strconv.Atoi(strings.TrimPrefix(part, "usagePercent:"))
+			hasPercent = true
 		} else if strings.HasPrefix(part, "resetInSec:") {
 			resetSec, _ = strconv.Atoi(strings.TrimPrefix(part, "resetInSec:"))
 		}
@@ -215,9 +219,6 @@ func parseSlotWindows(html string) []windowInfo {
 		label := m[1]
 		percentStr := m[2]
 		percent, _ := strconv.Atoi(percentStr)
-		if percent <= 0 {
-			continue
-		}
 		wt, ok := slotNameMap[label]
 		if !ok {
 			continue

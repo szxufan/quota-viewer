@@ -16,6 +16,7 @@ type QuotaResult struct {
 	ID          string    `json:"id"`          // provider id(注册表,前端对齐球格)
 	Abbr        string    `json:"abbr"`        // 球格缩写("K" / "讯" / "Go" / ...)
 	Kind        string    `json:"kind"`        // "usage"(默认) / "balance"
+	KeyIndex    int       `json:"key_index"`   // 该结果属于渠道的第几个凭证组(0 起);单凭证恒为 0
 	Used        float64   `json:"used"`        // 已用量
 	Total       float64   `json:"total"`       // 总量(平台返回则填,否则 0)
 	Percent     float64   `json:"percent"`     // Used/Total * 100;无总量时由剩余百分比反推

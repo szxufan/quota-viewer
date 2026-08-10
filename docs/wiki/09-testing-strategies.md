@@ -19,7 +19,7 @@
 
 | 类别 | 位置 | 模式 |
 |---|---|---|
-| 配置持久化 | `internal/config/config_test.go` | Load 默认值 / Save 往返 / 旧格式迁移（含 mimo_cookie 与 4 平台钳制） |
+| 配置持久化 | `internal/config/config_test.go` | Load 默认值 / Save 往返（含多组 keys）/ 旧格式迁移（含 mimo_cookie 与 CredKeys 兼容） |
 | 抓取器 | `internal/fetcher/*_test.go` | `net/http/httptest` 假服务 + baseURL 注入；成功/失败/异常 JSON 路径 |
 | 注册表 | `internal/fetcher/registry_test.go` | 5 个 Provider、顺序稳定、字段定义完整、Build 可执行不 panic |
 | 托盘 | 无测试 | 依赖 GUI，手工验证 |

@@ -140,6 +140,16 @@ func (k *KimiFetcher) Fetch() QuotaResult {
 		}
 		result.Remaining = fmt.Sprintf("%s / %s (5小时)", formatNum(used), formatNum(limit))
 		result.ResetAt = d.ResetTime
+		// 周额度同样有数据时一并显示
+		wUsed, _ := kimiParseStringFloat(body.Usage.Used)
+		wLimit, _ := kimiParseStringFloat(body.Usage.Limit)
+		if wUsed > 0 || wLimit > 0 {
+			if wLimit > 0 {
+				result.Remaining += fmt.Sprintf("\n%s / %s (周)", formatNum(wUsed), formatNum(wLimit))
+			} else {
+				result.Remaining += fmt.Sprintf("\n%s (周)", formatNum(wUsed))
+			}
+		}
 		return result
 	}
 

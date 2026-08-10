@@ -113,10 +113,11 @@ func (a *App) Refresh() []fetcher.QuotaResult {
 // ProviderInput 是前端提交的 Provider 状态。
 // 凭证字段空字符串 = 不修改(避免掩码回写覆盖真实值)。
 type ProviderInput struct {
-	ID      string            `json:"id"`
-	Enabled bool              `json:"enabled"`
-	Creds   map[string]string `json:"creds"`
-	Budget  float64           `json:"budget"`
+	ID      string              `json:"id"`
+	Enabled bool                `json:"enabled"`
+	Creds   map[string]string   `json:"creds"` // 旧前端单凭证(兼容;优先使用 Keys)
+	Keys    []map[string]string `json:"keys"`  // 多组凭证(每组一套字段值)
+	Budget  float64             `json:"budget"`
 }
 
 // GetConfig 返回当前配置(凭证做掩码)与全部 Provider 元数据。
@@ -133,10 +134,14 @@ func (a *App) GetConfig() map[string]interface{} {
 	providers := make([]map[string]interface{}, 0, len(fetcher.GetAll()))
 	for _, def := range fetcher.GetAll() {
 		pc, ok := cur[def.ID]
-		creds := map[string]string{}
+		keys := make([]map[string]string, 0)
 		if ok {
-			for k, v := range pc.Creds {
-				creds[k] = maskSecret(v)
+			for _, k := range pc.CredKeys() {
+				masked := make(map[string]string, len(k))
+				for fk, v := range k {
+					masked[fk] = maskSecret(v)
+				}
+				keys = append(keys, masked)
 			}
 		}
 		fields := make([]map[string]string, 0, len(def.Fields))
@@ -153,7 +158,8 @@ func (a *App) GetConfig() map[string]interface{} {
 			"enabled":   ok && pc.Enabled,
 			"login_url": def.LoginURL,
 			"fields":    fields,
-			"creds":     creds,
+			"creds":     keys,
+			"keys":      keys,
 			"budget":    pc.Budget,
 		})
 	}
@@ -166,12 +172,12 @@ func (a *App) GetConfig() map[string]interface{} {
 	}
 }
 
-// SaveConfig 保存 Provider 配置。最多 3 个启用、最少 1 个启用(后端钳制)。
+// SaveConfig 保存 Provider 配置。无上限(>=1 个启用),凭证支持多组(keys)。
 func (a *App) SaveConfig(providers []ProviderInput, refreshMin int) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	// 1) 钳制启用数量:0 个 → 全部启用(再由上限裁到前 3);超过 3 → 保留前 3
+	// 1) 钳制启用数量下限:0 个 → 全部启用
 	enabledCount := 0
 	for _, p := range providers {
 		if p.Enabled {
@@ -182,21 +188,9 @@ func (a *App) SaveConfig(providers []ProviderInput, refreshMin int) error {
 		for i := range providers {
 			providers[i].Enabled = true
 		}
-		enabledCount = len(providers)
-	}
-	if enabledCount > 3 {
-		kept := 0
-		for i := range providers {
-			if providers[i].Enabled {
-				kept++
-				if kept > 3 {
-					providers[i].Enabled = false
-				}
-			}
-		}
 	}
 
-	// 2) 合并到配置(空凭证 = 不修改)
+	// 2) 合并到配置(空凭证字段 = 不修改)
 	for _, in := range providers {
 		def, ok := fetcher.Get(in.ID)
 		if !ok {
@@ -216,14 +210,9 @@ func (a *App) SaveConfig(providers []ProviderInput, refreshMin int) error {
 		pc := &a.cfg.Providers[idx]
 		pc.Enabled = in.Enabled
 		pc.Budget = in.Budget
-		if pc.Creds == nil {
-			pc.Creds = map[string]string{}
-		}
-		for _, f := range def.Fields {
-			if v, ok := in.Creds[f.Key]; ok && v != "" {
-				pc.Creds[f.Key] = config.NormalizeCookieInput(v)
-			}
-		}
+		// 掩码还原基准必须包含 Creds(旧版单凭证),否则旧数据会被掩码字面量覆盖
+		pc.Keys = mergeKeys(pc.CredKeys(), in.Keys, in.Creds, def.Fields)
+		pc.Creds = nil // 统一以 Keys 为单一数据源
 	}
 
 	// 3) 按注册表顺序重排(展示顺序固定)
@@ -252,6 +241,67 @@ func (a *App) SaveConfig(providers []ProviderInput, refreshMin int) error {
 	return config.Save(a.cfg)
 }
 
+// mergeKeys 合并前端提交的多组凭证到旧值(全量替换 + 掩码还原)。
+// 前端对未修改的输入框提交 placeholder 掩码值:提交值若与任一旧组对应字段的掩码
+// 一致 → 还原旧值(支持删除组后索引错位);空值 = 清空该字段;全空组跳过。
+// in.Keys 为空(旧前端单凭证)时退化为 Creds 合并,结果作为单组。
+func mergeKeys(old []map[string]string, keys []map[string]string, creds map[string]string, fields []fetcher.CredentialField) []map[string]string {
+	// 旧前端退化路径:无 keys 时用 creds 合并
+	if len(keys) == 0 {
+		if len(creds) == 0 {
+			return old
+		}
+		merged := map[string]string{}
+		if len(old) > 0 {
+			for _, f := range fields {
+				merged[f.Key] = old[0][f.Key]
+			}
+		}
+		for _, f := range fields {
+			if v, ok := creds[f.Key]; ok && v != "" {
+				merged[f.Key] = config.NormalizeCookieInput(v)
+			}
+		}
+		if len(merged) == 0 {
+			return nil
+		}
+		return []map[string]string{merged}
+	}
+
+	// 提交值是否匹配某旧组对应字段的掩码(掩码占位符 → 还原旧值)
+	restore := func(f fetcher.CredentialField, v string) (string, bool) {
+		if v == "" {
+			return "", false
+		}
+		for _, og := range old {
+			if og[f.Key] != "" && maskSecret(og[f.Key]) == v {
+				return og[f.Key], true
+			}
+		}
+		return config.NormalizeCookieInput(v), false
+	}
+
+	out := make([]map[string]string, 0, len(keys))
+	for _, k := range keys {
+		group := map[string]string{}
+		for _, f := range fields {
+			v, _ := restore(f, k[f.Key])
+			if v == "" {
+				continue // 空 = 清空该字段
+			}
+			group[f.Key] = v
+		}
+		if len(group) == 0 {
+			continue // 全空组跳过
+		}
+		out = append(out, group)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
 // TestConnection 测试单个平台连接是否可用。
 func (a *App) TestConnection(platform string) string {
 	def, ok := fetcher.Get(platform)
@@ -263,7 +313,9 @@ func (a *App) TestConnection(platform string) string {
 	var creds map[string]string
 	for _, p := range a.cfg.Providers {
 		if p.ID == platform {
-			creds = p.Creds
+			if keys := p.CredKeys(); len(keys) > 0 {
+				creds = keys[0] // 测试用第一组凭证
+			}
 			break
 		}
 	}
@@ -291,14 +343,36 @@ func (a *App) SaveBallPosition(x, y int) error {
 }
 
 // ballSize 是悬浮球(收起态)窗口边长,与前端 SIZES.ball 保持一致。
-const ballSize = 60
+// 运行时随渠道数动态变化(见 SetBallSize),workarea_windows.go 的子类回调也读取它。
+var ballSize = 60
 
 // screenMargin 是展开后面板与屏幕边缘保留的间距。
 const screenMargin = 8
 
+// SetBallSize 前端渲染完 ball 网格后调用:更新最小/当前窗口尺寸并校正位置。
+func (a *App) SetBallSize(size int) {
+	if size < ballSizeMin {
+		size = ballSizeMin
+	}
+	if size == ballSize {
+		return
+	}
+	ballSize = size
+	wailsruntime.WindowSetMinSize(a.ctx, ballSize, ballSize)
+	wailsruntime.WindowSetSize(a.ctx, ballSize, ballSize)
+	// 尺寸变化后重新钳制位置,保证球完整落在屏幕内
+	x, y := wailsruntime.WindowGetPosition(a.ctx)
+	if nx, ny, ok := fitToScreen(a.ctx, x, y, ballSize, ballSize); ok {
+		wailsruntime.WindowSetPosition(a.ctx, nx, ny)
+	}
+}
+
+// ballSizeMin 是悬浮球最小边长(逻辑像素)。
+const ballSizeMin = 60
+
 // ExpandWindow 调整窗口尺寸并重新定位,保证面板完整落在当前屏幕内:
-// 默认从球的位置向右下展开,放不下则翻转到左上,最后整体钳制在屏幕内。
-// 首次展开时记录悬浮球位置,供 CollapseWindow 精确恢复。
+// 默认从球的位置向右下展开,放不下则翻转到左上,高度钳制在工作区内(防止超屏截断),
+// 最后整体钳制在屏幕内。首次展开时记录悬浮球位置,供 CollapseWindow 精确恢复。
 func (a *App) ExpandWindow(w, h int) {
 	a.mu.Lock()
 	if !a.expanded {
@@ -307,6 +381,14 @@ func (a *App) ExpandWindow(w, h int) {
 	}
 	x, y := a.savedX, a.savedY
 	a.mu.Unlock()
+
+	// 高度钳制到球所在屏幕工作区内(含边距),超出部分由前端内容区滚动
+	if _, _, _, wh, dpi, ok := workAreaForPoint(x, y); ok && dpi > 0 {
+		maxH := (wh - 2*screenMargin*dpi/96) * 96 / dpi
+		if h > maxH {
+			h = maxH
+		}
+	}
 
 	if nx, ny, ok := fitToScreen(a.ctx, x, y, w, h); ok {
 		x, y = nx, ny
@@ -395,42 +477,50 @@ func anchoredPos(ballX, ballY, w, h, ballPhys, rx, ry, rw, rh, margin int) (int,
 	return x, y
 }
 
-// fetchAll 并发抓取所有已启用的 Provider(最多 3 个),结果顺序 = 注册表顺序。
+// fetchAll 并发抓取所有已启用的 Provider 的所有凭证组,
+// 结果顺序 = 注册表顺序 × 凭证组顺序。
 func (a *App) fetchAll() []fetcher.QuotaResult {
 	a.mu.Lock()
 	cfg := *a.cfg
 	a.mu.Unlock()
 
-	enabled := make([]config.ProviderConfig, 0, 3)
+	type job struct {
+		providerID string
+		budget     float64
+		keyIdx     int
+		creds      map[string]string
+	}
+	jobs := make([]job, 0)
 	for _, p := range cfg.Providers {
-		if p.Enabled {
-			enabled = append(enabled, p)
-			if len(enabled) == 3 {
-				break
-			}
+		if !p.Enabled {
+			continue
+		}
+		for i, creds := range p.CredKeys() {
+			jobs = append(jobs, job{providerID: p.ID, budget: p.Budget, keyIdx: i, creds: creds})
 		}
 	}
 
-	results := make([]fetcher.QuotaResult, len(enabled))
+	results := make([]fetcher.QuotaResult, len(jobs))
 	var wg sync.WaitGroup
-	for i, p := range enabled {
-		def, ok := fetcher.Get(p.ID)
+	for i, j := range jobs {
+		def, ok := fetcher.Get(j.providerID)
 		if !ok {
-			results[i] = fetcher.QuotaResult{Platform: p.ID, Error: "未知平台"}
+			results[i] = fetcher.QuotaResult{Platform: j.providerID, Error: "未知平台"}
 			continue
 		}
 		wg.Add(1)
-		go func(i int, p config.ProviderConfig, def fetcher.ProviderDef) {
+		go func(i int, j job, def fetcher.ProviderDef) {
 			defer wg.Done()
-			r := def.Build(p.Creds).Fetch()
+			r := def.Build(j.creds).Fetch()
 			r.ID = def.ID
 			r.Abbr = def.Abbr
+			r.KeyIndex = j.keyIdx
 			if r.Kind == "" {
 				r.Kind = fetcher.KindUsage
 			}
-			fetcher.ApplyBudget(&r, p.Budget)
+			fetcher.ApplyBudget(&r, j.budget)
 			results[i] = r
-		}(i, p, def)
+		}(i, j, def)
 	}
 	wg.Wait()
 
@@ -453,11 +543,15 @@ func (a *App) startAutoRefresh() {
 }
 
 func maskSecret(s string) string {
-	if len(s) <= 8 {
-		if s == "" {
-			return ""
-		}
+	if s == "" {
+		return ""
+	}
+	if len(s) <= 4 {
 		return "****"
+	}
+	// 5-8 字符保留前后 2 位,避免多组凭证掩码全为 "****" 导致还原错位
+	if len(s) <= 8 {
+		return s[:2] + "..." + s[len(s)-2:]
 	}
 	return s[:4] + "..." + s[len(s)-4:]
 }

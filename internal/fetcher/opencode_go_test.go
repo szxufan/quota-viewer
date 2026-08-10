@@ -145,6 +145,9 @@ func TestOpenCodeGoFetcher_SSRData_PicksHighestPercent(t *testing.T) {
 	if !strings.Contains(result.Remaining, "月窗口") {
 		t.Errorf("expected '月窗口' in Remaining, got '%s'", result.Remaining)
 	}
+	if !strings.Contains(result.Remaining, "5小时窗口") {
+		t.Errorf("expected '5小时窗口' also shown in Remaining, got '%s'", result.Remaining)
+	}
 	if result.Total != 100 {
 		t.Errorf("expected Total=100, got %f", result.Total)
 	}
@@ -155,15 +158,15 @@ func TestOpenCodeGoFetcher_SSRData_PicksHighestPercent(t *testing.T) {
 	}
 }
 
-// TestOpenCodeGoFetcher_SSRData_TiebreakerRollingWins 验证相同百分比时 rolling > weekly > monthly。
-func TestOpenCodeGoFetcher_SSRData_TiebreakerRollingWins(t *testing.T) {
-	// rolling=10%, weekly=10%, monthly=5% → rolling wins
+// TestOpenCodeGoFetcher_SSRData_TiebreakerMonthlyWins 验证相同百分比时 rolling < weekly < monthly。
+func TestOpenCodeGoFetcher_SSRData_TiebreakerMonthlyWins(t *testing.T) {
+	// rolling=10%, weekly=5%, monthly=10% → monthly wins
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
 		html := `<script>
   rollingUsage:$R[1]={usagePercent:10,resetInSec:18000}
-  weeklyUsage:$R[2]={usagePercent:10,resetInSec:540000}
-  monthlyUsage:$R[3]={usagePercent:5,resetInSec:2480000}
+  weeklyUsage:$R[2]={usagePercent:5,resetInSec:540000}
+  monthlyUsage:$R[3]={usagePercent:10,resetInSec:2480000}
 </script>`
 		w.Write([]byte(html))
 	}))
@@ -178,8 +181,8 @@ func TestOpenCodeGoFetcher_SSRData_TiebreakerRollingWins(t *testing.T) {
 	if result.Percent != 10 {
 		t.Errorf("expected Percent=10, got %f", result.Percent)
 	}
-	if !strings.Contains(result.Remaining, "5小时窗口") {
-		t.Errorf("expected '5小时窗口' in Remaining (rolling wins), got '%s'", result.Remaining)
+	if !strings.Contains(result.Remaining, "月窗口") {
+		t.Errorf("expected '月窗口' in Remaining (monthly wins), got '%s'", result.Remaining)
 	}
 }
 
@@ -255,14 +258,15 @@ func TestOpenCodeGoFetcher_NoData_ReturnsPageStructureChanged(t *testing.T) {
 	}
 }
 
-// TestOpenCodeGoFetcher_SSRData_AllZeroPercent_ReturnsNoValidWindows 验证所有窗口 usagePercent=0 时返回"未找到有效配额窗口"。
-func TestOpenCodeGoFetcher_SSRData_AllZeroPercent_ReturnsNoValidWindows(t *testing.T) {
+// TestOpenCodeGoFetcher_SSRData_AllZeroPercent_ReturnsZeroUsage 验证所有窗口 usagePercent=0(额度未使用)时
+// 仍返回有效结果:Percent=0,并按 tiebreaker 选取 monthly 窗口。
+func TestOpenCodeGoFetcher_SSRData_AllZeroPercent_ReturnsZeroUsage(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
 		html := `<script>
-  rollingUsage:$R[10]={usagePercent:0,resetInSec:18000}
-  weeklyUsage:$R[11]={usagePercent:0,resetInSec:540000}
-  monthlyUsage:$R[12]={usagePercent:0,resetInSec:2480000}
+  rollingUsage:$R[10]={status:"ok",resetInSec:1025,usagePercent:0}
+  weeklyUsage:$R[11]={status:"ok",resetInSec:568284,usagePercent:0}
+  monthlyUsage:$R[12]={status:"ok",resetInSec:2404927,usagePercent:0}
 </script>`
 		w.Write([]byte(html))
 	}))
@@ -271,12 +275,18 @@ func TestOpenCodeGoFetcher_SSRData_AllZeroPercent_ReturnsNoValidWindows(t *testi
 	f := NewOpenCodeGoFetcher("ws-1", "tok_abc")
 	f.baseURL = server.URL
 	result := f.Fetch()
-	if !strings.Contains(result.Error, "未找到有效配额窗口") {
-		t.Errorf("expected '未找到有效配额窗口', got '%s'", result.Error)
+	if result.Error != "" {
+		t.Fatalf("unexpected error: %s", result.Error)
+	}
+	if result.Percent != 0 {
+		t.Errorf("expected Percent=0 (all windows unused), got %f", result.Percent)
+	}
+	if !strings.Contains(result.Remaining, "月窗口") {
+		t.Errorf("expected '月窗口' in Remaining (monthly wins tiebreaker), got '%s'", result.Remaining)
 	}
 }
 
-// TestOpenCodeGoFetcher_SSRData_ZeroPercent_NotPicked 验证 usagePercent=0 的窗口不被纳入选择(避免无意义窗口)。
+// TestOpenCodeGoFetcher_SSRData_ZeroPercent_NotPicked 验证 usagePercent=0 的窗口在存在更高用量窗口时不被选中。
 func TestOpenCodeGoFetcher_SSRData_ZeroPercent_NotPicked(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
