@@ -76,14 +76,27 @@ html, body {
     justify-content: center;
     font-size: 13px;
     font-weight: 600;
-    color: var(--text-3); /* 未加载=灰 */
-    transition: color 0.3s ease;
     user-select: none;
 }
+/* 双色文字:已用部分=状态色(--used-color),剩余部分=灰色;断点由 --used 决定。
+   渐变作用于文字自身盒子(宽度=字形宽度),比例才与字形一致,而非整个格子 */
+.ball-cell-text {
+    display: inline-block;
+    color: transparent;
+    background-image: linear-gradient(
+        90deg,
+        var(--used-color, var(--text-3)) 0%,
+        var(--used-color, var(--text-3)) var(--used, 0%),
+        var(--text-3) var(--used, 0%),
+        var(--text-3) 100%
+    );
+    -webkit-background-clip: text;
+    background-clip: text;
+}
 .ball-cell + .ball-cell { border-left: 1px solid var(--hairline); }
-.ball-cell.green { color: var(--green); }
-.ball-cell.yellow { color: var(--yellow); }
-.ball-cell.red { color: var(--red); }
+.ball-cell.green .ball-cell-text { --used-color: var(--green); }
+.ball-cell.yellow .ball-cell-text { --used-color: var(--yellow); }
+.ball-cell.red .ball-cell-text { --used-color: var(--red); }
 
 /* 网格模式(>3 个 key):按 --cols/--rows 均分,JS 标记首行/首列去掉分隔线 */
 .ball.grid { flex-wrap: wrap; }

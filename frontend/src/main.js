@@ -235,7 +235,13 @@ function updateBall(results) {
     results.forEach((r) => {
         const cell = document.createElement("span");
         cell.className = "ball-cell " + getStatusColor(r);
-        cell.textContent = r.abbr || r.platform.slice(0, 1);
+        // 文字包一层 span:双色渐变作用于字形宽度,比例才准确
+        const label = document.createElement("span");
+        label.className = "ball-cell-text";
+        // 双色断点:错误时全红;否则按已用百分比切分(0 = 全灰)
+        label.style.setProperty("--used", (r.error ? 100 : r.percent || 0) + "%");
+        label.textContent = r.abbr || r.platform.slice(0, 1);
+        cell.appendChild(label);
         ball.appendChild(cell);
     });
 
