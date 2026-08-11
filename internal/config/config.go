@@ -12,6 +12,7 @@ type Config struct {
 	RefreshIntervalMin int              `json:"refresh_interval_min"`
 	BallX              int              `json:"ball_x"`
 	BallY              int              `json:"ball_y"`
+	Opacity            float64          `json:"opacity"` // 界面透明度 0.2-1.0,1.0 = 不透明
 }
 
 // ProviderConfig 描述单个 Provider 的启用状态与凭证。
@@ -76,6 +77,7 @@ func Default() *Config {
 		RefreshIntervalMin: 15,
 		BallX:              -1,
 		BallY:              -1,
+		Opacity:            1.0,
 	}
 	for _, id := range AllProviderIDs {
 		enabled := false
@@ -137,6 +139,10 @@ func Load() (*Config, error) {
 	// 确保 providers 非空(防御:损坏文件)
 	if len(cfg.Providers) == 0 {
 		cfg.Providers = Default().Providers
+	}
+	// 确保透明度在合法范围(旧配置无此字段 → 零值 0 → 回退不透明)
+	if cfg.Opacity <= 0 || cfg.Opacity > 1 {
+		cfg.Opacity = 1
 	}
 
 	return cfg, nil

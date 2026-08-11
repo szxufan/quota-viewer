@@ -169,7 +169,22 @@ func (a *App) GetConfig() map[string]interface{} {
 		"refresh_interval_min": a.cfg.RefreshIntervalMin,
 		"ball_x":               a.cfg.BallX,
 		"ball_y":               a.cfg.BallY,
+		"opacity":              a.cfg.Opacity,
 	}
+}
+
+// SetOpacity 保存界面透明度(0.2-1.0),越界钳制。
+func (a *App) SetOpacity(opacity float64) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if opacity < 0.2 {
+		opacity = 0.2
+	}
+	if opacity > 1 {
+		opacity = 1
+	}
+	a.cfg.Opacity = opacity
+	return config.Save(a.cfg)
 }
 
 // SaveConfig 保存 Provider 配置。无上限(>=1 个启用),凭证支持多组(keys)。

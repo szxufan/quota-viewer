@@ -300,11 +300,36 @@ async function resizeSettings() {
     }, 30);
 }
 
+// applyOpacity 应用界面透明度(0.2-1.0)并同步百分比显示
+function applyOpacity(v) {
+    document.body.style.opacity = v;
+    document.getElementById("opacity-value").textContent = Math.round(v * 100) + "%";
+}
+
+// 透明度滑块:input 实时预览,change(松开)持久化
+document.getElementById("input-opacity").addEventListener("input", (e) => {
+    applyOpacity(parseFloat(e.target.value));
+});
+document.getElementById("input-opacity").addEventListener("change", async (e) => {
+    const v = parseFloat(e.target.value);
+    applyOpacity(v);
+    try {
+        await window.go.main.App.SetOpacity(v);
+    } catch (err) {
+        console.error("setOpacity error:", err);
+        toast("保存透明度失败: " + err, "error");
+    }
+});
+
 async function loadConfig() {
     try {
         const cfg = await window.go.main.App.GetConfig();
         renderProviderList(cfg.providers || []);
         document.getElementById("input-interval").value = cfg.refresh_interval_min || 15;
+        // 透明度:应用已保存值并同步滑块
+        const opacity = typeof cfg.opacity === "number" ? cfg.opacity : 1;
+        document.getElementById("input-opacity").value = opacity;
+        applyOpacity(opacity);
         resizeSettings(); // 配置渲染完成后按内容调整窗口高度
     } catch (e) {
         console.error("loadConfig error:", e);
@@ -556,6 +581,11 @@ document.getElementById("ball").addEventListener("mouseup", () => {
 
 // === 启动:加载初始数据 ===
 window.go.main.App.Refresh();
+
+// 启动时应用已保存的界面透明度(GetConfig 只读,无副作用)
+window.go.main.App.GetConfig().then((cfg) => {
+    if (typeof cfg.opacity === "number") applyOpacity(cfg.opacity);
+}).catch(() => {});
 
 // === 托盘事件 ===
 window.runtime.EventsOn("tray:refresh", () => {

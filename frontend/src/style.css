@@ -330,6 +330,32 @@ html, body {
 .form-group textarea { resize: none; }
 .input-narrow { width: 90px !important; }
 
+/* === 透明度滑块 === */
+.opacity-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+.opacity-row input[type="range"] {
+    flex: 1;
+    min-width: 0;
+    appearance: auto;
+    accent-color: var(--accent);
+    background: transparent;
+    border: none;
+    padding: 0;
+    height: 20px;
+    cursor: pointer;
+}
+.opacity-value {
+    flex: none;
+    width: 44px;
+    text-align: right;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-2);
+}
+
 .field-actions {
     display: flex;
     gap: 6px;

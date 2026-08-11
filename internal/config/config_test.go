@@ -37,6 +37,9 @@ func TestLoad_FileNotExists_ReturnsDefaults(t *testing.T) {
 	if cfg.BallX != -1 || cfg.BallY != -1 {
 		t.Errorf("expected default BallX=-1, BallY=-1, got %d,%d", cfg.BallX, cfg.BallY)
 	}
+	if cfg.Opacity != 1.0 {
+		t.Errorf("expected default Opacity=1.0, got %f", cfg.Opacity)
+	}
 	if len(cfg.Providers) != len(AllProviderIDs) {
 		t.Fatalf("expected %d providers, got %d", len(AllProviderIDs), len(cfg.Providers))
 	}
@@ -75,6 +78,7 @@ func TestSaveThenLoad_RoundTrip(t *testing.T) {
 		RefreshIntervalMin: 30,
 		BallX:              100,
 		BallY:              200,
+		Opacity:            0.65,
 	}
 
 	err := Save(original)
@@ -120,6 +124,9 @@ func TestSaveThenLoad_RoundTrip(t *testing.T) {
 	}
 	if loaded.BallX != 100 || loaded.BallY != 200 {
 		t.Errorf("Ball position mismatch: got %d,%d", loaded.BallX, loaded.BallY)
+	}
+	if loaded.Opacity != 0.65 {
+		t.Errorf("Opacity mismatch: got %f, want 0.65", loaded.Opacity)
 	}
 }
 
@@ -255,5 +262,33 @@ func TestCredKeys_Compat(t *testing.T) {
 	p = ProviderConfig{}
 	if keys := p.CredKeys(); keys != nil {
 		t.Errorf("expected nil, got %+v", keys)
+	}
+}
+
+// Opacity 钳制:缺字段(旧配置)或越界值一律回退为 1.0。
+func TestLoad_OpacityClamping(t *testing.T) {
+	cases := []struct {
+		name string
+		json string
+		want float64
+	}{
+		// 新格式缺 opacity 字段(旧版本配置)→ 回退 1.0
+		{"missing field", `{"providers": [{"id": "kimi"}]}`, 1.0},
+		{"zero value", `{"providers": [{"id": "kimi"}], "opacity": 0}`, 1.0},
+		{"negative", `{"providers": [{"id": "kimi"}], "opacity": -1}`, 1.0},
+		{"too large", `{"providers": [{"id": "kimi"}], "opacity": 2}`, 1.0},
+		{"valid", `{"providers": [{"id": "kimi"}], "opacity": 0.4}`, 0.4},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			writeConfig(t, tc.json)
+			cfg, err := Load()
+			if err != nil {
+				t.Fatalf("Load() error: %v", err)
+			}
+			if cfg.Opacity != tc.want {
+				t.Errorf("Opacity mismatch: got %f, want %f", cfg.Opacity, tc.want)
+			}
+		})
 	}
 }
