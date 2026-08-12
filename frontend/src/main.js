@@ -196,8 +196,10 @@ function formatCountdown(isoStr) {
     if (isNaN(target.getTime())) return "";
     const diff = target - Date.now();
     if (diff <= 0) return "已过期";
-    const hours = Math.floor(diff / 3600000);
+    const days = Math.floor(diff / 86400000);
+    const hours = Math.floor((diff % 86400000) / 3600000);
     const mins = Math.floor((diff % 3600000) / 60000);
+    if (days > 0) return `距下次刷新: ${days}天${hours}时${mins}分`;
     if (hours > 0) return `距下次刷新: ${hours}时${mins}分`;
     return `距下次刷新: ${mins}分`;
 }
