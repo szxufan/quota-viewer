@@ -52,6 +52,9 @@ func (a *App) OnStartup(ctx context.Context) {
 	// 样式切换后重申置顶,防止球窗被其它窗口盖住
 	wailsruntime.WindowSetAlwaysOnTop(ctx, true)
 
+	// 应用已保存的界面透明度(窗口级 alpha,见 setWindowOpacity)
+	setWindowOpacity(a.cfg.Opacity)
+
 	// 恢复悬浮球位置(配置中 BallX/BallY >= 0 时生效)
 	// BallX/BallY 来自 WindowGetPosition 返回的虚拟桌面绝对坐标,
 	// 需要 fitToScreen 转为显示器相对坐标后再传给 WindowSetPosition
@@ -173,10 +176,9 @@ func (a *App) GetConfig() map[string]interface{} {
 	}
 }
 
-// SetOpacity 保存界面透明度(0.2-1.0),越界钳制。
+// SetOpacity 保存界面透明度(0.2-1.0),越界钳制,并立即应用到窗口。
 func (a *App) SetOpacity(opacity float64) error {
 	a.mu.Lock()
-	defer a.mu.Unlock()
 	if opacity < 0.2 {
 		opacity = 0.2
 	}
@@ -184,7 +186,16 @@ func (a *App) SetOpacity(opacity float64) error {
 		opacity = 1
 	}
 	a.cfg.Opacity = opacity
-	return config.Save(a.cfg)
+	err := config.Save(a.cfg)
+	a.mu.Unlock()
+	setWindowOpacity(opacity)
+	return err
+}
+
+// SetOpacityPreview 实时预览透明度(仅应用到窗口,不写入配置)。
+// 滑块拖动过程中调用,避免频繁写盘;松开滑块由 SetOpacity 持久化。
+func (a *App) SetOpacityPreview(opacity float64) {
+	setWindowOpacity(opacity)
 }
 
 // SaveConfig 保存 Provider 配置。无上限(>=1 个启用),凭证支持多组(keys)。

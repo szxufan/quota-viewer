@@ -20,21 +20,23 @@ type monitorInfo struct {
 }
 
 var (
-	winUser32            = syscall.NewLazyDLL("user32.dll")
-	winShcore            = syscall.NewLazyDLL("shcore.dll")
-	winComctl32          = syscall.NewLazyDLL("comctl32.dll")
-	procMonitorFromPoint = winUser32.NewProc("MonitorFromPoint")
-	procGetMonitorInfoW  = winUser32.NewProc("GetMonitorInfoW")
-	procGetDpiForMonitor = winShcore.NewProc("GetDpiForMonitor")
-	procFindWindowW      = winUser32.NewProc("FindWindowW")
-	procGetWindowLongW   = winUser32.NewProc("GetWindowLongPtrW")
-	procSetWindowLongW   = winUser32.NewProc("SetWindowLongPtrW")
-	procSetWindowPos     = winUser32.NewProc("SetWindowPos")
-	procGetDpiForWindow  = winUser32.NewProc("GetDpiForWindow")
-	procSetWindowSub     = winComctl32.NewProc("SetWindowSubclass")
-	procDefSubclassProc  = winComctl32.NewProc("DefSubclassProc")
+	winUser32             = syscall.NewLazyDLL("user32.dll")
+	winShcore             = syscall.NewLazyDLL("shcore.dll")
+	winComctl32           = syscall.NewLazyDLL("comctl32.dll")
+	procMonitorFromPoint  = winUser32.NewProc("MonitorFromPoint")
+	procGetMonitorInfoW   = winUser32.NewProc("GetMonitorInfoW")
+	procGetDpiForMonitor  = winShcore.NewProc("GetDpiForMonitor")
+	procFindWindowW       = winUser32.NewProc("FindWindowW")
+	procGetWindowLongW    = winUser32.NewProc("GetWindowLongPtrW")
+	procSetWindowLongW    = winUser32.NewProc("SetWindowLongPtrW")
+	procSetWindowPos      = winUser32.NewProc("SetWindowPos")
+	procGetDpiForWindow   = winUser32.NewProc("GetDpiForWindow")
+	procSetWindowSub      = winComctl32.NewProc("SetWindowSubclass")
+	procDefSubclassProc   = winComctl32.NewProc("DefSubclassProc")
+	procSetLayeredWinAttr = winUser32.NewProc("SetLayeredWindowAttributes")
 
 	subclassCB uintptr // 持有回调引用,防止被 GC 回收
+	windowHWND uintptr // 应用主窗口句柄(setupWindowStyles 中保存)
 )
 
 const (
@@ -45,6 +47,12 @@ const (
 
 	// 工具窗口:不进任务栏、不出现在 Alt+Tab、没有任务栏缩略图(托盘应用标准做法)
 	wsExToolWindow = 0x00000080
+
+	// 分层窗口样式:仅透明度 < 100% 时启用,配合 SetLayeredWindowAttributes
+	// 对窗口整体做统一 alpha 合成(不依赖 WebView2 透明渲染,可靠透出背后窗口)
+	wsExLayered = 0x00080000
+
+	lwaAlpha = 0x00000002 // LWA_ALPHA:按 alpha 值控制窗口整体不透明度
 
 	wmGetMinMaxInfo = 0x0024
 
@@ -86,6 +94,7 @@ func setupWindowStyles(title string) bool {
 	if hwnd == 0 {
 		return false
 	}
+	windowHWND = hwnd
 
 	exStyleIdxV := int32(gwlExStyle) // 经变量转换,避免常量负数溢出 uintptr
 	exStyleIdx := uintptr(exStyleIdxV)
@@ -99,6 +108,36 @@ func setupWindowStyles(title string) bool {
 	subclassCB = syscall.NewCallback(minTrackSubclassProc)
 	ret, _, _ := procSetWindowSub.Call(hwnd, subclassCB, 1, 0)
 	return ret != 0
+}
+
+// setWindowOpacity 设置窗口整体透明度(0.2-1.0,1.0 = 不透明)。
+// 透明度 < 100% 时启用 WS_EX_LAYERED 并用 SetLayeredWindowAttributes 做统一
+// alpha 合成——整个窗口(含背景)按比例变透明,背后窗口内容清晰可见;
+// 恢复 100% 时移除分层样式,窗口回到普通状态(与默认完全一致,无副作用)。
+func setWindowOpacity(alpha float64) {
+	if windowHWND == 0 {
+		return
+	}
+	exStyleIdxV := int32(gwlExStyle)
+	exStyleIdx := uintptr(exStyleIdxV)
+	exStyle, _, _ := procGetWindowLongW.Call(windowHWND, exStyleIdx)
+
+	if alpha >= 1 {
+		// 恢复不透明:移除分层样式,窗口回到普通状态
+		if exStyle&wsExLayered != 0 {
+			procSetWindowLongW.Call(windowHWND, exStyleIdx, exStyle&^wsExLayered)
+			procSetWindowPos.Call(windowHWND, 0, 0, 0, 0, 0,
+				swpNoMove|swpNoSize|swpNoZOrder|swpNoActivate|swpFrameChanged)
+		}
+		return
+	}
+
+	if exStyle&wsExLayered == 0 {
+		procSetWindowLongW.Call(windowHWND, exStyleIdx, exStyle|wsExLayered)
+		procSetWindowPos.Call(windowHWND, 0, 0, 0, 0, 0,
+			swpNoMove|swpNoSize|swpNoZOrder|swpNoActivate|swpFrameChanged)
+	}
+	procSetLayeredWinAttr.Call(windowHWND, 0, uintptr(alpha*255), lwaAlpha)
 }
 
 // workAreaForPoint 返回包含点 (px,py)(物理像素)的显示器工作区(不含任务栏)

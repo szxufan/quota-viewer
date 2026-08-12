@@ -11,3 +11,6 @@ func workAreaForPoint(px, py int) (x, y, w, h, dpi int, ok bool) {
 func setupWindowStyles(title string) bool {
 	return false
 }
+
+// setWindowOpacity 非 Windows 平台暂无窗口级透明度实现(空操作)。
+func setWindowOpacity(alpha float64) {}

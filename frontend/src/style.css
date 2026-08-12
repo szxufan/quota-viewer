@@ -32,8 +32,11 @@
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
+/* 页面背景用与 UI 表面一致的深色(不透明):窗口级透明度(SetLayeredWindowAttributes)
+   对窗口整体做 alpha 合成,圆角外等未绘制区域会随透明度显示为半透明背景色,
+   深色背景保证与悬浮球/面板视觉融合,避免露出白色块 */
 html, body {
-    background: transparent;
+    background: #11131a;
     overflow: hidden;
     font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
     font-size: 13px;
@@ -46,7 +49,7 @@ html, body {
 .hidden { display: none !important; }
 .muted { color: var(--text-3); font-size: 11px; }
 
-/* === 悬浮球:玻璃方块 + 三格平台缩写(颜色=状态) === */
+/* === 悬浮球:深色方块 + 三格平台缩写(颜色=状态) === */
 .ball {
     position: relative;
     display: flex;
@@ -55,8 +58,6 @@ html, body {
     height: 60px;
     border-radius: 16px;
     background: var(--surface);
-    backdrop-filter: blur(20px) saturate(1.4);
-    -webkit-backdrop-filter: blur(20px) saturate(1.4);
     border: 1px solid var(--border);
     box-shadow:
         inset 0 1px 0 rgba(255, 255, 255, 0.06),
@@ -114,8 +115,6 @@ html, body {
 .panel, .settings {
     width: 340px;
     background: var(--surface);
-    backdrop-filter: blur(20px) saturate(1.4);
-    -webkit-backdrop-filter: blur(20px) saturate(1.4);
     border: 1px solid var(--border);
     border-radius: var(--radius-panel);
     box-shadow:

@@ -308,15 +308,19 @@ async function resizeSettings() {
     }, 30);
 }
 
-// applyOpacity 应用界面透明度(0.2-1.0)并同步百分比显示
+// applyOpacity 同步透明度 UI 显示(窗口级透明度由 Go 侧 setWindowOpacity 控制,
+// 前端不再用 CSS opacity,避免与窗口 alpha 双重叠加)
 function applyOpacity(v) {
-    document.body.style.opacity = v;
     document.getElementById("opacity-value").textContent = Math.round(v * 100) + "%";
 }
 
-// 透明度滑块:input 实时预览,change(松开)持久化
+// 透明度滑块:input 实时预览(Go 直接改窗口 alpha),change(松开)持久化
 document.getElementById("input-opacity").addEventListener("input", (e) => {
-    applyOpacity(parseFloat(e.target.value));
+    const v = parseFloat(e.target.value);
+    applyOpacity(v);
+    window.go.main.App.SetOpacityPreview(v).catch((err) => {
+        console.error("setOpacityPreview error:", err);
+    });
 });
 document.getElementById("input-opacity").addEventListener("change", async (e) => {
     const v = parseFloat(e.target.value);
@@ -334,7 +338,7 @@ async function loadConfig() {
         const cfg = await window.go.main.App.GetConfig();
         renderProviderList(cfg.providers || []);
         document.getElementById("input-interval").value = cfg.refresh_interval_min || 15;
-        // 透明度:应用已保存值并同步滑块
+        // 透明度:同步滑块显示(窗口 alpha 已由 Go OnStartup 应用)
         const opacity = typeof cfg.opacity === "number" ? cfg.opacity : 1;
         document.getElementById("input-opacity").value = opacity;
         applyOpacity(opacity);
@@ -589,11 +593,6 @@ document.getElementById("ball").addEventListener("mouseup", () => {
 
 // === 启动:加载初始数据 ===
 window.go.main.App.Refresh();
-
-// 启动时应用已保存的界面透明度(GetConfig 只读,无副作用)
-window.go.main.App.GetConfig().then((cfg) => {
-    if (typeof cfg.opacity === "number") applyOpacity(cfg.opacity);
-}).catch(() => {});
 
 // === 托盘事件 ===
 window.runtime.EventsOn("tray:refresh", () => {
