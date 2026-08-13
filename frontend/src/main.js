@@ -418,6 +418,7 @@ function renderProviderList(providers) {
         savedKeys.forEach((k) => {
             groups.push(renderCredGroup(groupsWrap, p, k, groups));
         });
+        refreshGroupLabels(groupsWrap, groups); // 用最终组数刷新删除按钮显隐
         card.appendChild(groupsWrap);
 
         // 添加凭证按钮
@@ -426,6 +427,7 @@ function renderProviderList(providers) {
         addBtn.textContent = "+ 添加凭证";
         addBtn.addEventListener("click", () => {
             groups.push(renderCredGroup(groupsWrap, p, {}, groups));
+            refreshGroupLabels(groupsWrap, groups); // 新组入列后再刷新
             resizeSettings(); // 内容变高,窗口按需加高
         });
         card.appendChild(addBtn);
@@ -502,7 +504,6 @@ function renderCredGroup(wrap, p, creds, groups) {
     group.appendChild(del);
 
     wrap.appendChild(group);
-    refreshGroupLabels(wrap, groups);
     return g;
 }
 
