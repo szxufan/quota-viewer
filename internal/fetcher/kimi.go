@@ -127,43 +127,56 @@ func (k *KimiFetcher) Fetch() QuotaResult {
 		return result
 	}
 
-	// 优先:5 小时窗口(limits[0].detail)
+	// 收集所有可用窗口(5 小时 / 周),按百分比最高选主窗口;
+	// 相同百分比时 rolling(5小时) > weekly(周),与 OpenCode Go 规则一致。
+	type kimiWindow struct {
+		windowType string // "rolling" | "weekly"
+		label      string // "5小时" | "周"
+		used, limit, percent float64
+		resetTime  string
+	}
+	windowOrder := map[string]int{"rolling": 0, "weekly": 1}
+	var windows []kimiWindow
+
 	if len(body.Limits) > 0 && body.Limits[0].Detail.Limit != "" {
 		d := body.Limits[0].Detail
 		remaining, _ := kimiParseStringFloat(d.Remaining)
 		limit, _ := kimiParseStringFloat(d.Limit)
 		used := limit - remaining
-		result.Used = used
-		result.Total = limit
+		var pct float64
 		if limit > 0 {
-			result.Percent = used / limit * 100
+			pct = used / limit * 100
 		}
-		result.Remaining = fmt.Sprintf("%s / %s (5小时)", formatNum(used), formatNum(limit))
-		result.ResetAt = d.ResetTime
-		// 周额度同样有数据时一并显示
-		wUsed, _ := kimiParseStringFloat(body.Usage.Used)
-		wLimit, _ := kimiParseStringFloat(body.Usage.Limit)
-		if wUsed > 0 || wLimit > 0 {
-			if wLimit > 0 {
-				result.Remaining += fmt.Sprintf("\n%s / %s (周)", formatNum(wUsed), formatNum(wLimit))
-			} else {
-				result.Remaining += fmt.Sprintf("\n%s (周)", formatNum(wUsed))
-			}
-		}
-		return result
+		windows = append(windows, kimiWindow{"rolling", "5小时", used, limit, pct, d.ResetTime})
 	}
-
-	// 兜底:周额度 usage 对象
 	if body.Usage.Limit != "" || body.Usage.Used != "" {
 		used, _ := kimiParseStringFloat(body.Usage.Used)
 		limit, _ := kimiParseStringFloat(body.Usage.Limit)
-		result.Used = used
-		result.Total = limit
+		var pct float64
 		if limit > 0 {
-			result.Percent = used / limit * 100
+			pct = used / limit * 100
 		}
-		result.Remaining = fmt.Sprintf("%s / %s", formatNum(used), formatNum(limit))
-		result.ResetAt = body.Usage.ResetTime
+		windows = append(windows, kimiWindow{"weekly", "周", used, limit, pct, body.Usage.ResetTime})
+	}
+
+	if len(windows) > 0 {
+		best := windows[0]
+		for _, w := range windows[1:] {
+			if w.percent > best.percent ||
+				(w.percent == best.percent && windowOrder[w.windowType] < windowOrder[best.windowType]) {
+				best = w
+			}
+		}
+		result.Used = best.used
+		result.Total = best.limit
+		result.Percent = best.percent
+		result.ResetAt = best.resetTime
+		// 全部窗口展示在 Remaining(每个窗口一行)
+		var lines []string
+		for _, w := range windows {
+			lines = append(lines, fmt.Sprintf("%s / %s (%s)", formatNum(w.used), formatNum(w.limit), w.label))
+		}
+		result.Remaining = strings.Join(lines, "\n")
 		return result
 	}
 
