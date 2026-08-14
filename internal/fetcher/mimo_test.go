@@ -8,7 +8,7 @@ import (
 )
 
 func TestMiMoFetcher_EmptyCookie_ReturnsError(t *testing.T) {
-	f := NewMiMoFetcher("", "")
+	f := NewMiMoFetcher("", "", "")
 	result := f.Fetch()
 	if result.Error == "" {
 		t.Error("expected error for empty cookie")
@@ -24,7 +24,7 @@ func TestMiMoFetcher_401_ReturnsCookieExpired(t *testing.T) {
 	}))
 	defer server.Close()
 
-	f := NewMiMoFetcher("session=abc", server.URL)
+	f := NewMiMoFetcher("session=abc", "", server.URL)
 	result := f.Fetch()
 	if !strings.Contains(result.Error, "Cookie 已过期") {
 		t.Errorf("expected 'Cookie 已过期', got '%s'", result.Error)
@@ -38,7 +38,7 @@ func TestMiMoFetcher_302_ReturnsCookieExpired(t *testing.T) {
 	}))
 	defer server.Close()
 
-	f := NewMiMoFetcher("session=abc", server.URL)
+	f := NewMiMoFetcher("session=abc", "", server.URL)
 	result := f.Fetch()
 	if !strings.Contains(result.Error, "Cookie 已过期") {
 		t.Errorf("expected 'Cookie 已过期', got '%s'", result.Error)
@@ -75,7 +75,7 @@ func TestMiMoFetcher_JSONResponse_CreditsFields_ParsesUsage(t *testing.T) {
 	}))
 	defer server.Close()
 
-	f := NewMiMoFetcher("session=abc", server.URL)
+	f := NewMiMoFetcher("session=abc", "", server.URL)
 	result := f.Fetch()
 	if result.Error != "" {
 		t.Fatalf("unexpected error: %s", result.Error)
@@ -111,7 +111,7 @@ func TestMiMoFetcher_JSONResponse_MonthUsage_FallbackPercent(t *testing.T) {
 	}))
 	defer server.Close()
 
-	f := NewMiMoFetcher("session=abc", server.URL)
+	f := NewMiMoFetcher("session=abc", "", server.URL)
 	result := f.Fetch()
 	if result.Error != "" {
 		t.Fatalf("unexpected error: %s", result.Error)
@@ -138,7 +138,7 @@ func TestMiMoFetcher_NoUsageData_FallsBackToBalance(t *testing.T) {
 	}))
 	defer balanceServer.Close()
 
-	f := NewMiMoFetcher("session=abc", usageServer.URL)
+	f := NewMiMoFetcher("session=abc", "", usageServer.URL)
 	f.balanceURL = balanceServer.URL + "/api/v1/balance"
 	result := f.Fetch()
 	if result.Error != "" {
@@ -172,7 +172,7 @@ func TestMiMoFetcher_BalanceNumericField_AlsoParses(t *testing.T) {
 	}))
 	defer balanceServer.Close()
 
-	f := NewMiMoFetcher("session=abc", usageServer.URL)
+	f := NewMiMoFetcher("session=abc", "", usageServer.URL)
 	f.balanceURL = balanceServer.URL + "/api/v1/balance"
 	result := f.Fetch()
 	if result.Error != "" {
@@ -198,10 +198,135 @@ func TestMiMoFetcher_NoUsageData_BalanceFails_ReturnsError(t *testing.T) {
 	}))
 	defer balanceServer.Close()
 
-	f := NewMiMoFetcher("session=abc", usageServer.URL)
+	f := NewMiMoFetcher("session=abc", "", usageServer.URL)
 	f.balanceURL = balanceServer.URL + "/api/v1/balance"
 	result := f.Fetch()
 	if result.Error == "" {
 		t.Error("expected error when usage has no data and balance fails")
+	}
+}
+
+// startMiMoSTSChain 启动模拟小米 STS 换取链路的测试服务器:
+// genLoginUrl 302 -> serviceLogin(校验小米账号 Cookie)302 -> sts(下发 MiMo Cookie)。
+func startMiMoSTSChain(t *testing.T) {
+	t.Helper()
+	stsServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/sts" {
+			t.Errorf("expected /sts, got %s", r.URL.Path)
+		}
+		w.Header().Add("Set-Cookie", `api-platform_serviceToken="tok123+/="; Version=1; Domain=platform.xiaomimimo.com; Path=/; HttpOnly`)
+		w.Header().Add("Set-Cookie", "userId=2398921322; Domain=xiaomimimo.com; Path=/")
+		w.Header().Add("Set-Cookie", `api-platform_slh="slh1"; Version=1; Domain=platform.xiaomimimo.com; Path=/`)
+		w.Header().Add("Set-Cookie", "api-platform_ph=ph1; Version=1; Domain=platform.xiaomimimo.com; Path=/")
+		w.Header().Set("Location", "https://platform.xiaomimimo.com/console/balance?userId=2398921322")
+		w.WriteHeader(302)
+	}))
+	t.Cleanup(stsServer.Close)
+
+	loginServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.Contains(r.Header.Get("Cookie"), "passToken=pt") {
+			t.Errorf("expected xiaomi cookie, got %q", r.Header.Get("Cookie"))
+		}
+		w.Header().Set("Location", stsServer.URL+"/sts?sign=s&auth=a")
+		w.WriteHeader(302)
+	}))
+	t.Cleanup(loginServer.Close)
+
+	genServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/genLoginUrl" {
+			t.Errorf("expected genLoginUrl, got %s", r.URL.Path)
+		}
+		w.Header().Set("Location", loginServer.URL+"/pass/serviceLogin?callback=cb&sid=api-platform")
+		w.WriteHeader(302)
+	}))
+	t.Cleanup(genServer.Close)
+
+	old := mimoGenLoginURL
+	mimoGenLoginURL = genServer.URL + "/api/v1/genLoginUrl"
+	t.Cleanup(func() { mimoGenLoginURL = old })
+}
+
+func TestMiMoFetcher_XiaomiCookieOnly_ExchangesAndFetches(t *testing.T) {
+	// 只配置小米账号 Cookie:应先自动换取 MiMo Cookie 再查询
+	startMiMoSTSChain(t)
+
+	usageServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// 校验请求携带的是换取出的新 MiMo Cookie
+		if !strings.Contains(r.Header.Get("Cookie"), "api-platform_serviceToken=tok123+/=") {
+			t.Errorf("expected new mimo cookie, got %q", r.Header.Get("Cookie"))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"code":0,"data":{"usage":{"percent":0.2,"items":[{"name":"plan_total_token","used":1,"limit":10,"percent":0.2}]}}}`))
+	}))
+	defer usageServer.Close()
+
+	f := NewMiMoFetcher("", "passToken=pt", usageServer.URL)
+	result := f.Fetch()
+	if result.Error != "" {
+		t.Fatalf("unexpected error: %s", result.Error)
+	}
+	if result.Total != 10 {
+		t.Errorf("expected Total=10, got %f", result.Total)
+	}
+	// 换取出的新 Cookie 应上报,供上层写回配置
+	got := result.UpdatedCreds["cookie"]
+	if !strings.Contains(got, "api-platform_serviceToken=tok123+/=") || !strings.Contains(got, "userId=2398921322") {
+		t.Errorf("expected new cookie in UpdatedCreds, got %q", got)
+	}
+}
+
+func TestMiMoFetcher_ExpiredCookie_RefreshesViaXiaomi(t *testing.T) {
+	// MiMo Cookie 失效(401)时,应自动用小米账号 Cookie 换取新 Cookie 并重试
+	startMiMoSTSChain(t)
+
+	calls := 0
+	usageServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if strings.Contains(r.Header.Get("Cookie"), "serviceToken=old") {
+			w.WriteHeader(401) // 旧 Cookie 拒绝
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"code":0,"data":{"usage":{"percent":0.1,"items":[{"name":"plan_total_token","used":1,"limit":10,"percent":0.1}]}}}`))
+	}))
+	defer usageServer.Close()
+
+	f := NewMiMoFetcher("serviceToken=old", "passToken=pt", usageServer.URL)
+	result := f.Fetch()
+	if result.Error != "" {
+		t.Fatalf("unexpected error: %s", result.Error)
+	}
+	if calls < 2 {
+		t.Errorf("expected retry after refresh, calls=%d", calls)
+	}
+	if got := result.UpdatedCreds["cookie"]; !strings.Contains(got, "api-platform_serviceToken=") {
+		t.Errorf("expected refreshed cookie in UpdatedCreds, got %q", got)
+	}
+}
+
+func TestMiMoFetcher_InvalidXiaomiCookie_ReturnsError(t *testing.T) {
+	// 小米账号 Cookie 失效时 serviceLogin 返回登录页(200)而非跳转
+	loginServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+	}))
+	defer loginServer.Close()
+
+	genServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Location", loginServer.URL+"/pass/serviceLogin?callback=cb")
+		w.WriteHeader(302)
+	}))
+	defer genServer.Close()
+
+	old := mimoGenLoginURL
+	mimoGenLoginURL = genServer.URL + "/api/v1/genLoginUrl"
+	defer func() { mimoGenLoginURL = old }()
+
+	f := NewMiMoFetcher("", "passToken=bad", "https://example.com/api")
+	result := f.Fetch()
+	if !strings.Contains(result.Error, "小米账号 Cookie 已失效") {
+		t.Errorf("expected xiaomi cookie expired error, got %q", result.Error)
+	}
+	if len(result.UpdatedCreds) != 0 {
+		t.Errorf("expected no updated creds, got %v", result.UpdatedCreds)
 	}
 }

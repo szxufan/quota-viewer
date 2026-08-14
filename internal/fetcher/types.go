@@ -26,6 +26,10 @@ type QuotaResult struct {
 	ResetAt     string    `json:"reset_at"`    // 下次重置时间(ISO 8601,空则未知)
 	LastUpdated time.Time `json:"last_updated"`
 	Error       string    `json:"error"`       // 非空表示失败
+
+	// UpdatedCreds 本次抓取产生的、应写回配置的新凭证(字段 key → 新值);空 = 无更新。
+	// 仅 Go 内部使用(如 MiMo Cookie 自动换取),不暴露给前端。
+	UpdatedCreds map[string]string `json:"-"`
 }
 
 // Fetcher 是额度查询器的统一接口。

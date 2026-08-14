@@ -503,8 +503,16 @@ func anchoredPos(ballX, ballY, w, h, ballPhys, rx, ry, rw, rh, margin int) (int,
 	return x, y
 }
 
+// credUpdate 是一次抓取产生的新凭证(如 MiMo Cookie 自动换取),抓取完成后写回配置。
+type credUpdate struct {
+	providerID string
+	keyIdx     int
+	creds      map[string]string
+}
+
 // fetchAll 并发抓取所有已启用的 Provider 的所有凭证组,
 // 结果顺序 = 注册表顺序 × 凭证组顺序。
+// 抓取中产生的新凭证(如 MiMo Cookie 自动换取)会写回配置并保存。
 func (a *App) fetchAll() []fetcher.QuotaResult {
 	a.mu.Lock()
 	cfg := *a.cfg
@@ -526,6 +534,11 @@ func (a *App) fetchAll() []fetcher.QuotaResult {
 		}
 	}
 
+	var (
+		updMu   sync.Mutex
+		updates []credUpdate
+	)
+
 	results := make([]fetcher.QuotaResult, len(jobs))
 	var wg sync.WaitGroup
 	for i, j := range jobs {
@@ -538,6 +551,11 @@ func (a *App) fetchAll() []fetcher.QuotaResult {
 		go func(i int, j job, def fetcher.ProviderDef) {
 			defer wg.Done()
 			r := def.Build(j.creds).Fetch()
+			if len(r.UpdatedCreds) > 0 {
+				updMu.Lock()
+				updates = append(updates, credUpdate{providerID: j.providerID, keyIdx: j.keyIdx, creds: r.UpdatedCreds})
+				updMu.Unlock()
+			}
 			r.ID = def.ID
 			r.Abbr = def.Abbr
 			r.KeyIndex = j.keyIdx
@@ -550,7 +568,41 @@ func (a *App) fetchAll() []fetcher.QuotaResult {
 	}
 	wg.Wait()
 
+	a.persistCredUpdates(updates)
 	return results
+}
+
+// persistCredUpdates 把抓取产生的新凭证(如 MiMo Cookie 自动换取结果)写回配置并保存。
+func (a *App) persistCredUpdates(updates []credUpdate) {
+	if len(updates) == 0 {
+		return
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	changed := false
+	for _, u := range updates {
+		for i := range a.cfg.Providers {
+			if a.cfg.Providers[i].ID != u.providerID {
+				continue
+			}
+			keys := a.cfg.Providers[i].CredKeys()
+			if u.keyIdx < 0 || u.keyIdx >= len(keys) {
+				break
+			}
+			for k, v := range u.creds {
+				if keys[u.keyIdx][k] == v {
+					continue
+				}
+				keys[u.keyIdx][k] = v
+				changed = true
+			}
+			break
+		}
+	}
+	if changed {
+		_ = config.Save(a.cfg)
+	}
 }
 
 // startAutoRefresh 定时后台刷新。

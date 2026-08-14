@@ -68,9 +68,10 @@ var registry = []ProviderDef{
 		LoginURL: "https://platform.xiaomimimo.com/console/plan-manage",
 		Fields: []CredentialField{
 			{Key: "cookie", Label: "Cookie(浏览器 F12 复制)", Type: "textarea"},
+			{Key: "xiaomi_cookie", Label: "小米账号 Cookie(可选:失效时自动换取)", Type: "textarea"},
 		},
 		Build: func(creds map[string]string) Fetcher {
-			return NewMiMoFetcher(creds["cookie"], "")
+			return NewMiMoFetcher(creds["cookie"], creds["xiaomi_cookie"], "")
 		},
 	},
 	{
