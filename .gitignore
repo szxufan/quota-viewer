@@ -2,6 +2,7 @@
 build/bin
 frontend/dist
 frontend/wailsjs
+quota-viewer.exe
 
 # 依赖
 node_modules
