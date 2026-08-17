@@ -87,6 +87,21 @@ var registry = []ProviderDef{
 			return NewDeepSeekFetcher(creds["api_key"])
 		},
 	},
+	{
+		ID:          "glm",
+		DisplayName: "GLM",
+		Abbr:        "GLM",
+		Kind:        KindUsage,
+		LoginURL:    "https://bigmodel.cn/coding-plan/personal/overview",
+		Fields: []CredentialField{
+			{Key: "token", Label: "Token(authorization 头,F12 复制)", Type: "password"},
+			{Key: "organization", Label: "Organization ID(可选)", Type: "text"},
+			{Key: "project", Label: "Project ID(可选)", Type: "text"},
+		},
+		Build: func(creds map[string]string) Fetcher {
+			return NewGLMFetcher(creds["token"], creds["organization"], creds["project"])
+		},
+	},
 }
 
 // GetAll 返回全部注册 Provider 的副本(固定顺序)。

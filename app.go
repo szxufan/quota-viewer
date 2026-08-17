@@ -198,6 +198,26 @@ func (a *App) SetOpacityPreview(opacity float64) {
 	setWindowOpacity(opacity)
 }
 
+// settingsMode 记录当前是否处于设置界面模式(不透明)
+var settingsMode bool
+
+// SetSettingsMode 切换设置界面模式:进入设置界面时临时设置不透明,
+// 离开时恢复配置中的透明度。
+func (a *App) SetSettingsMode(enabled bool) {
+	if enabled {
+		// 进入设置界面:临时设置不透明
+		settingsMode = true
+		setWindowOpacity(1.0)
+	} else {
+		// 离开设置界面:恢复配置中的透明度
+		settingsMode = false
+		a.mu.Lock()
+		opacity := a.cfg.Opacity
+		a.mu.Unlock()
+		setWindowOpacity(opacity)
+	}
+}
+
 // SaveConfig 保存 Provider 配置。无上限(>=1 个启用),凭证支持多组(keys)。
 func (a *App) SaveConfig(providers []ProviderInput, refreshMin int) error {
 	a.mu.Lock()

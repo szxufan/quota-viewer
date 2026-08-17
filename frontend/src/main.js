@@ -15,10 +15,18 @@ let providerCards = []; // [{id, enabled, groups: [{fields: [{key, input}]}], bu
 
 // === 视图切换(统一入口,负责窗口尺寸与屏幕内定位) ===
 function setView(view) {
+    const prevView = currentView;
     currentView = view;
     document.getElementById("ball").classList.toggle("hidden", view !== "ball");
     document.getElementById("panel").classList.toggle("hidden", view !== "panel");
     document.getElementById("settings").classList.toggle("hidden", view !== "settings");
+
+    // 设置界面模式:进入时临时不透明,离开时恢复透明度
+    if (view === "settings" && prevView !== "settings") {
+        window.go.main.App.SetSettingsMode(true).catch(() => {});
+    } else if (view !== "settings" && prevView === "settings") {
+        window.go.main.App.SetSettingsMode(false).catch(() => {});
+    }
 
     if (view === "ball") {
         window.go.main.App.CollapseWindow();
@@ -315,9 +323,12 @@ function applyOpacity(v) {
 }
 
 // 透明度滑块:input 实时预览(Go 直接改窗口 alpha),change(松开)持久化
+// 注意:预览时临时退出设置模式,让整个窗口预览透明度效果
 document.getElementById("input-opacity").addEventListener("input", (e) => {
     const v = parseFloat(e.target.value);
     applyOpacity(v);
+    // 临时退出设置模式,让整个窗口预览透明度效果
+    window.go.main.App.SetSettingsMode(false).catch(() => {});
     window.go.main.App.SetOpacityPreview(v).catch((err) => {
         console.error("setOpacityPreview error:", err);
     });
@@ -327,6 +338,8 @@ document.getElementById("input-opacity").addEventListener("change", async (e) =>
     applyOpacity(v);
     try {
         await window.go.main.App.SetOpacity(v);
+        // 保存后重新进入设置模式,让设置界面保持不透明
+        window.go.main.App.SetSettingsMode(true).catch(() => {});
     } catch (err) {
         console.error("setOpacity error:", err);
         toast("保存透明度失败: " + err, "error");
