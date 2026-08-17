@@ -2,12 +2,12 @@ package fetcher
 
 import "testing"
 
-func TestGetAll_ContainsSixProviders_InStableOrder(t *testing.T) {
+func TestGetAll_ContainsSevenProviders_InStableOrder(t *testing.T) {
 	all := GetAll()
-	if len(all) != 6 {
-		t.Fatalf("expected 6 providers, got %d", len(all))
+	if len(all) != 7 {
+		t.Fatalf("expected 7 providers, got %d", len(all))
 	}
-	want := []string{"kimi", "xfyun", "opencode-go", "mimo", "deepseek", "glm"}
+	want := []string{"kimi", "xfyun", "opencode-go", "mimo", "deepseek", "glm", "openrouter"}
 	for i, id := range want {
 		if all[i].ID != id {
 			t.Errorf("expected providers[%d].ID=%s, got %s", i, id, all[i].ID)

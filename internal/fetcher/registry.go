@@ -102,6 +102,19 @@ var registry = []ProviderDef{
 			return NewGLMFetcher(creds["token"], creds["organization"], creds["project"])
 		},
 	},
+	{
+		ID:          "openrouter",
+		DisplayName: "OpenRouter",
+		Abbr:        "OR",
+		Kind:        KindUsage,
+		LoginURL:    "https://openrouter.ai/settings/credits",
+		Fields: []CredentialField{
+			{Key: "api_key", Label: "API Key", Type: "password"},
+		},
+		Build: func(creds map[string]string) Fetcher {
+			return NewOpenRouterFetcher(creds["api_key"])
+		},
+	},
 }
 
 // GetAll 返回全部注册 Provider 的副本(固定顺序)。
