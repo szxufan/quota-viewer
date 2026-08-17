@@ -90,7 +90,7 @@ var registry = []ProviderDef{
 	{
 		ID:          "glm",
 		DisplayName: "GLM",
-		Abbr:        "GLM",
+		Abbr:        "GL",
 		Kind:        KindUsage,
 		LoginURL:    "https://bigmodel.cn/coding-plan/personal/overview",
 		Fields: []CredentialField{

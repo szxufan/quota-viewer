@@ -54,8 +54,9 @@ html, body {
     position: relative;
     display: flex;
     align-items: stretch;
-    width: 60px;
-    height: 60px;
+    /* 尺寸跟随窗口:窗口由 Go 侧 SetBallSize 按网格动态调整 */
+    width: 100%;
+    height: 100%;
     border-radius: 16px;
     background: var(--surface);
     border: 1px solid var(--border);
