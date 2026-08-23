@@ -20,8 +20,9 @@ type ProviderConfig struct {
 	ID      string              `json:"id"`
 	Enabled bool                `json:"enabled"`
 	Creds   map[string]string   `json:"creds,omitempty"` // 旧版单凭证(兼容读取;保存后统一升级为 Keys)
-	Keys    []map[string]string `json:"keys,omitempty"`  // 多组凭证(每组一套字段值);空 = 未配置多 key
-	Budget  float64             `json:"budget,omitempty"` // 余额型 Provider 的预算总量(0 = 未设)
+	Keys         []map[string]string `json:"keys,omitempty"`         // 多组凭证(每组一套字段值);空 = 未配置多 key
+	Budget       float64             `json:"budget,omitempty"`       // 余额型 Provider 的预算总量(0 = 未设)
+	LastBalances []float64           `json:"last_balances,omitempty"` // 各凭证组上次抓取到的余额(充值检测基线)
 }
 
 // CredKeys 返回凭证组列表:优先 Keys;否则旧 Creds 视为单组;均空返回 nil。

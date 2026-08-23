@@ -115,6 +115,20 @@ var registry = []ProviderDef{
 			return NewOpenRouterFetcher(creds["api_key"])
 		},
 	},
+	{
+		ID:          "aliyun",
+		DisplayName: "阿里云",
+		Abbr:        "AL",
+		Kind:        KindBalance,
+		LoginURL:    "https://usercenter2.aliyun.com/home",
+		Fields: []CredentialField{
+			{Key: "access_key_id", Label: "AccessKey ID", Type: "text"},
+			{Key: "access_key_secret", Label: "AccessKey Secret", Type: "password"},
+		},
+		Build: func(creds map[string]string) Fetcher {
+			return NewAliyunFetcher(creds["access_key_id"], creds["access_key_secret"])
+		},
+	},
 }
 
 // GetAll 返回全部注册 Provider 的副本(固定顺序)。

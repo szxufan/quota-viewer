@@ -25,3 +25,13 @@ func ApplyBudget(r *QuotaResult, budget float64) {
 	sym := currencySymbol(r.Currency)
 	r.Remaining = fmt.Sprintf("%s%.2f / %s%.2f (预算)", sym, r.Balance, sym, budget)
 }
+
+// DetectRecharge 判定本次抓取是否发生充值:仅对成功且无错误的余额型结果生效
+// (用量型如 OpenRouter 由平台返回真实总额,不参与)。存在上次余额记录且
+// 当前余额严格大于上次记录时视为充值。首次抓取(hasLast=false)只记基线不算充值。
+func DetectRecharge(r QuotaResult, lastBalance float64, hasLast bool) bool {
+	if r.Kind != KindBalance || r.Error != "" || r.Balance < 0 {
+		return false
+	}
+	return hasLast && r.Balance > lastBalance
+}

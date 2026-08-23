@@ -259,6 +259,10 @@ func (a *App) SaveConfig(providers []ProviderInput, refreshMin int) error {
 		// 掩码还原基准必须包含 Creds(旧版单凭证),否则旧数据会被掩码字面量覆盖
 		pc.Keys = mergeKeys(pc.CredKeys(), in.Keys, in.Creds, def.Fields)
 		pc.Creds = nil // 统一以 Keys 为单一数据源
+		// 凭证组数变化后旧余额基线不再对齐,重置待下次抓取重建
+		if len(pc.Keys) != len(pc.LastBalances) {
+			pc.LastBalances = nil
+		}
 	}
 
 	// 3) 按注册表顺序重排(展示顺序固定)
@@ -540,7 +544,6 @@ func (a *App) fetchAll() []fetcher.QuotaResult {
 
 	type job struct {
 		providerID string
-		budget     float64
 		keyIdx     int
 		creds      map[string]string
 	}
@@ -550,7 +553,7 @@ func (a *App) fetchAll() []fetcher.QuotaResult {
 			continue
 		}
 		for i, creds := range p.CredKeys() {
-			jobs = append(jobs, job{providerID: p.ID, budget: p.Budget, keyIdx: i, creds: creds})
+			jobs = append(jobs, job{providerID: p.ID, keyIdx: i, creds: creds})
 		}
 	}
 
@@ -582,14 +585,76 @@ func (a *App) fetchAll() []fetcher.QuotaResult {
 			if r.Kind == "" {
 				r.Kind = fetcher.KindUsage
 			}
-			fetcher.ApplyBudget(&r, j.budget)
 			results[i] = r
 		}(i, j, def)
 	}
 	wg.Wait()
 
 	a.persistCredUpdates(updates)
+	a.applyAutoBudget(results)
 	return results
+}
+
+// applyAutoBudget 余额型渠道自动更新预算:
+// 成功的余额型结果与本凭证组上次余额比较,余额增加视为充值,将新余额写入渠道预算;
+// 同时刷新各组余额基线并落盘;最后用最新配置预算重算消耗百分比。
+func (a *App) applyAutoBudget(results []fetcher.QuotaResult) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	idx := map[string]int{}
+	for i := range a.cfg.Providers {
+		idx[a.cfg.Providers[i].ID] = i
+	}
+
+	newBudget := map[string]float64{} // 渠道 id → 充值后的新预算(多 key 取最大)
+	changed := false
+	for i := range results {
+		r := &results[i]
+		if r.Kind != fetcher.KindBalance || r.Error != "" {
+			continue
+		}
+		pi, ok := idx[r.ID]
+		if !ok {
+			continue
+		}
+		pc := &a.cfg.Providers[pi]
+		hasLast := r.KeyIndex < len(pc.LastBalances)
+		var last float64
+		if hasLast {
+			last = pc.LastBalances[r.KeyIndex]
+		}
+		if fetcher.DetectRecharge(*r, last, hasLast) {
+			if b, seen := newBudget[r.ID]; !seen || r.Balance > b {
+				newBudget[r.ID] = r.Balance
+			}
+		}
+		for len(pc.LastBalances) <= r.KeyIndex {
+			pc.LastBalances = append(pc.LastBalances, 0)
+		}
+		if pc.LastBalances[r.KeyIndex] != r.Balance {
+			pc.LastBalances[r.KeyIndex] = r.Balance
+			changed = true
+		}
+	}
+	for id, b := range newBudget {
+		if pc := &a.cfg.Providers[idx[id]]; pc.Budget != b {
+			pc.Budget = b
+			changed = true
+		}
+	}
+	if changed {
+		_ = config.Save(a.cfg)
+	}
+
+	// 用最新预算重算展示值(含未发生变化的渠道,统一走原逻辑)
+	for i := range results {
+		b := 0.0
+		if pi, ok := idx[results[i].ID]; ok {
+			b = a.cfg.Providers[pi].Budget
+		}
+		fetcher.ApplyBudget(&results[i], b)
+	}
 }
 
 // persistCredUpdates 把抓取产生的新凭证(如 MiMo Cookie 自动换取结果)写回配置并保存。
