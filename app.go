@@ -116,11 +116,12 @@ func (a *App) Refresh() []fetcher.QuotaResult {
 // ProviderInput 是前端提交的 Provider 状态。
 // 凭证字段空字符串 = 不修改(避免掩码回写覆盖真实值)。
 type ProviderInput struct {
-	ID      string              `json:"id"`
-	Enabled bool                `json:"enabled"`
-	Creds   map[string]string   `json:"creds"` // 旧前端单凭证(兼容;优先使用 Keys)
-	Keys    []map[string]string `json:"keys"`  // 多组凭证(每组一套字段值)
-	Budget  float64             `json:"budget"`
+	ID       string              `json:"id"`
+	Enabled  bool                `json:"enabled"`
+	Creds    map[string]string   `json:"creds"`    // 旧前端单凭证(兼容;优先使用 Keys)
+	Keys     []map[string]string `json:"keys"`     // 多组凭证(每组一套字段值)
+	KeyNames []string            `json:"keyNames"` // 各凭证组的显示名(与 Keys 对齐)
+	Budget   float64             `json:"budget"`
 }
 
 // GetConfig 返回当前配置(凭证做掩码)与全部 Provider 元数据。
@@ -163,6 +164,7 @@ func (a *App) GetConfig() map[string]interface{} {
 			"fields":    fields,
 			"creds":     keys,
 			"keys":      keys,
+			"key_names": pc.KeyNames,
 			"budget":    pc.Budget,
 		})
 	}
@@ -259,6 +261,8 @@ func (a *App) SaveConfig(providers []ProviderInput, refreshMin int) error {
 		// 掩码还原基准必须包含 Creds(旧版单凭证),否则旧数据会被掩码字面量覆盖
 		pc.Keys = mergeKeys(pc.CredKeys(), in.Keys, in.Creds, def.Fields)
 		pc.Creds = nil // 统一以 Keys 为单一数据源
+		// 凭证组显示名与 Keys 对齐;组数增加/删除时按顺序截断/补齐(空名 = 回退 "Key N")
+		pc.KeyNames = alignKeyNames(in.KeyNames, len(pc.Keys))
 		// 凭证组数变化后旧余额基线不再对齐,重置待下次抓取重建
 		if len(pc.Keys) != len(pc.LastBalances) {
 			pc.LastBalances = nil
@@ -348,6 +352,20 @@ func mergeKeys(old []map[string]string, keys []map[string]string, creds map[stri
 	}
 	if len(out) == 0 {
 		return nil
+	}
+	return out
+}
+
+// alignKeyNames 把前端提交的凭证组显示名与 Keys 对齐:
+// 保证返回 slice 与 keys 等长,不足补空(空名 = 详情页回退 "Key N"),超出截断。
+func alignKeyNames(names []string, n int) []string {
+	out := make([]string, 0, n)
+	for i := 0; i < n; i++ {
+		var name string
+		if i < len(names) {
+			name = names[i]
+		}
+		out = append(out, name)
 	}
 	return out
 }
@@ -545,6 +563,7 @@ func (a *App) fetchAll() []fetcher.QuotaResult {
 	type job struct {
 		providerID string
 		keyIdx     int
+		keyName    string
 		creds      map[string]string
 	}
 	jobs := make([]job, 0)
@@ -553,7 +572,11 @@ func (a *App) fetchAll() []fetcher.QuotaResult {
 			continue
 		}
 		for i, creds := range p.CredKeys() {
-			jobs = append(jobs, job{providerID: p.ID, keyIdx: i, creds: creds})
+			name := ""
+			if i < len(p.KeyNames) {
+				name = p.KeyNames[i]
+			}
+			jobs = append(jobs, job{providerID: p.ID, keyIdx: i, keyName: name, creds: creds})
 		}
 	}
 
@@ -582,6 +605,7 @@ func (a *App) fetchAll() []fetcher.QuotaResult {
 			r.ID = def.ID
 			r.Abbr = def.Abbr
 			r.KeyIndex = j.keyIdx
+			r.KeyName = j.keyName
 			if r.Kind == "" {
 				r.Kind = fetcher.KindUsage
 			}

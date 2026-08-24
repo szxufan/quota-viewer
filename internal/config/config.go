@@ -17,11 +17,12 @@ type Config struct {
 
 // ProviderConfig 描述单个 Provider 的启用状态与凭证。
 type ProviderConfig struct {
-	ID      string              `json:"id"`
-	Enabled bool                `json:"enabled"`
-	Creds   map[string]string   `json:"creds,omitempty"` // 旧版单凭证(兼容读取;保存后统一升级为 Keys)
-	Keys         []map[string]string `json:"keys,omitempty"`         // 多组凭证(每组一套字段值);空 = 未配置多 key
-	Budget       float64             `json:"budget,omitempty"`       // 余额型 Provider 的预算总量(0 = 未设)
+	ID           string              `json:"id"`
+	Enabled      bool                `json:"enabled"`
+	Creds        map[string]string   `json:"creds,omitempty"`         // 旧版单凭证(兼容读取;保存后统一升级为 Keys)
+	Keys         []map[string]string `json:"keys,omitempty"`          // 多组凭证(每组一套字段值);空 = 未配置多 key
+	KeyNames     []string            `json:"key_names,omitempty"`     // 各凭证组的显示名(与 Keys 对齐;空 = 详情页回退 "Key N")
+	Budget       float64             `json:"budget,omitempty"`        // 余额型 Provider 的预算总量(0 = 未设)
 	LastBalances []float64           `json:"last_balances,omitempty"` // 各凭证组上次抓取到的余额(充值检测基线)
 }
 

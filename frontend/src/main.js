@@ -157,11 +157,13 @@ function renderResults(results) {
             const resetHtml = (r.reset_at && !r.error)
                 ? `<div class="quota-reset" data-reset-at="${r.reset_at}">${formatCountdown(r.reset_at)}</div>`
                 : "";
+            // 优先显示配置的凭证名,否则多 key 时回退 "Key N"(单 key 留空)
+            const keyLabel = r.key_name || (items.length > 1 ? "Key " + (ki + 1) : "");
             const cell = document.createElement("div");
             cell.className = "quota-key-cell";
             cell.innerHTML = `
                 <div class="quota-key-head">
-                    <span class="quota-key-label">${items.length > 1 ? "Key " + (ki + 1) : ""}</span>
+                    <span class="quota-key-label">${keyLabel}</span>
                     <span class="quota-remaining ${r.error ? "error-text" : ""}">${r.error || r.remaining || "-"}</span>
                 </div>
                 <div class="progress-bar">
@@ -279,7 +281,7 @@ function updateBall(results) {
     }
 
     ball.title = results
-        .map((r) => r.platform + (r.key_index > 0 ? " Key " + (r.key_index + 1) : "") + ": " + (r.error || r.remaining || "未知"))
+        .map((r) => r.platform + (r.key_name || (r.key_index > 0 ? " Key " + (r.key_index + 1) : "")) + ": " + (r.error || r.remaining || "未知"))
         .join("\n");
 
     // 仅在收起态调整窗口尺寸,避免覆盖展开面板
@@ -367,15 +369,20 @@ async function loadConfig() {
 // 后端据此还原旧值,未修改的组自然保留
 function collectProviders() {
     return providerCards.map((c) => {
-        const keys = c.groups.map((g) => {
+        // 过滤全空组(无值且无掩码占位):提交无意义,且避免 keys/keyNames 错位
+        const groups = c.groups.filter((g) =>
+            g.fields.some((f) => f.input.value || f.input.placeholder)
+        );
+        const keys = groups.map((g) => {
             const creds = {};
             g.fields.forEach((f) => {
                 creds[f.key] = f.input.value || f.input.placeholder || "";
             });
             return creds;
         });
+        const keyNames = groups.map((g) => (g.nameInput ? g.nameInput.value.trim() : ""));
         const budget = c.budget ? parseFloat(c.budget.value) || 0 : 0;
-        return { id: c.id, enabled: c.enabled.checked, keys, budget };
+        return { id: c.id, enabled: c.enabled.checked, keys, keyNames, budget };
     });
 }
 
@@ -428,8 +435,8 @@ function renderProviderList(providers) {
         groupsWrap.className = "provider-groups";
         const groups = [];
         const savedKeys = (p.keys && p.keys.length) ? p.keys : [{}];
-        savedKeys.forEach((k) => {
-            groups.push(renderCredGroup(groupsWrap, p, k, groups));
+        savedKeys.forEach((k, i) => {
+            groups.push(renderCredGroup(groupsWrap, p, k, groups, (p.key_names || [])[i] || ""));
         });
         refreshGroupLabels(groupsWrap, groups); // 用最终组数刷新删除按钮显隐
         card.appendChild(groupsWrap);
@@ -439,7 +446,7 @@ function renderProviderList(providers) {
         addBtn.className = "btn-sm add-cred";
         addBtn.textContent = "+ 添加凭证";
         addBtn.addEventListener("click", () => {
-            groups.push(renderCredGroup(groupsWrap, p, {}, groups));
+            groups.push(renderCredGroup(groupsWrap, p, {}, groups, ""));
             refreshGroupLabels(groupsWrap, groups); // 新组入列后再刷新
             resizeSettings(); // 内容变高,窗口按需加高
         });
@@ -479,10 +486,25 @@ function renderProviderList(providers) {
 }
 
 // 渲染一组凭证字段(按注册表元数据生成,placeholder 显示掩码值);
-// 组尾带"删除此凭证"按钮(组数 >1 时显示)。返回组对象 {fields:[{key,input}]}。
-function renderCredGroup(wrap, p, creds, groups) {
+// 组首为可选的显示名输入(详情页用其代替 "Key N");组尾带"删除此凭证"按钮(组数 >1 时显示)。
+// 返回组对象 {fields:[{key,input}], nameInput}。
+function renderCredGroup(wrap, p, creds, groups, name) {
     const group = document.createElement("div");
     group.className = "provider-group";
+
+    // 显示名(可选):用于详情页代替 "Key N" 辨识
+    const nameGroup = document.createElement("div");
+    nameGroup.className = "form-group";
+    const nameLabel = document.createElement("label");
+    nameLabel.textContent = "名称(可选)";
+    const nameInput = document.createElement("input");
+    nameInput.type = "text";
+    nameInput.className = "provider-group-name";
+    nameInput.placeholder = "详情页标识,如 \"工作号\"";
+    if (name) nameInput.value = name;
+    nameInput.addEventListener("input", () => refreshGroupLabels(wrap, groups));
+    nameGroup.append(nameLabel, nameInput);
+    group.appendChild(nameGroup);
 
     const fieldsWrap = document.createElement("div");
     fieldsWrap.className = "provider-fields";
@@ -503,7 +525,7 @@ function renderCredGroup(wrap, p, creds, groups) {
     });
     group.appendChild(fieldsWrap);
 
-    const g = { fields };
+    const g = { fields, nameInput };
     const del = document.createElement("button");
     del.className = "btn-sm del-cred";
     del.textContent = "删除此凭证";
@@ -520,7 +542,7 @@ function renderCredGroup(wrap, p, creds, groups) {
     return g;
 }
 
-// 刷新凭证组编号("凭证 n")与删除按钮可见性
+// 刷新凭证组标签(显示名或 "凭证 n")与删除按钮可见性
 function refreshGroupLabels(wrap, groups) {
     Array.from(wrap.children).forEach((el, i) => {
         let label = el.querySelector(".provider-group-label");
@@ -529,7 +551,9 @@ function refreshGroupLabels(wrap, groups) {
             label.className = "provider-group-label";
             el.insertBefore(label, el.firstChild);
         }
-        label.textContent = groups.length > 1 ? `凭证 ${i + 1}` : "";
+        const nameEl = el.querySelector(".provider-group-name");
+        const name = nameEl ? (nameEl.value || "").trim() : "";
+        label.textContent = name || (groups.length > 1 ? `凭证 ${i + 1}` : "");
         const del = el.querySelector(".del-cred");
         if (del) del.style.display = groups.length > 1 ? "" : "none";
     });
