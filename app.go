@@ -119,9 +119,10 @@ type ProviderInput struct {
 	ID       string              `json:"id"`
 	Enabled  bool                `json:"enabled"`
 	Creds    map[string]string   `json:"creds"`    // 旧前端单凭证(兼容;优先使用 Keys)
-	Keys     []map[string]string `json:"keys"`     // 多组凭证(每组一套字段值)
-	KeyNames []string            `json:"keyNames"` // 各凭证组的显示名(与 Keys 对齐)
-	Budget   float64             `json:"budget"`
+	Keys     []map[string]string `json:"keys"`      // 多组凭证(每组一套字段值)
+	KeyNames []string            `json:"keyNames"`  // 各凭证组的显示名(与 Keys 对齐)
+	Budgets  []float64           `json:"budgets"`   // 各凭证组的预算(与 Keys 对齐)
+	Budget   float64             `json:"budget"`    // 旧前端渠道级预算(兼容;忽略,由 Budgets 取代)
 }
 
 // GetConfig 返回当前配置(凭证做掩码)与全部 Provider 元数据。
@@ -165,7 +166,7 @@ func (a *App) GetConfig() map[string]interface{} {
 			"creds":     keys,
 			"keys":      keys,
 			"key_names": pc.KeyNames,
-			"budget":    pc.Budget,
+			"budgets":   pc.Budgets,
 		})
 	}
 
@@ -257,12 +258,14 @@ func (a *App) SaveConfig(providers []ProviderInput, refreshMin int) error {
 		}
 		pc := &a.cfg.Providers[idx]
 		pc.Enabled = in.Enabled
-		pc.Budget = in.Budget
 		// 掩码还原基准必须包含 Creds(旧版单凭证),否则旧数据会被掩码字面量覆盖
 		pc.Keys = mergeKeys(pc.CredKeys(), in.Keys, in.Creds, def.Fields)
 		pc.Creds = nil // 统一以 Keys 为单一数据源
 		// 凭证组显示名与 Keys 对齐;组数增加/删除时按顺序截断/补齐(空名 = 回退 "Key N")
 		pc.KeyNames = alignKeyNames(in.KeyNames, len(pc.Keys))
+		// 各凭证组的预算与 Keys 对齐(0 = 该组未设);旧渠道级预算字段废弃
+		pc.Budgets = config.AlignBudgets(in.Budgets, len(pc.Keys))
+		pc.Budget = 0
 		// 凭证组数变化后旧余额基线不再对齐,重置待下次抓取重建
 		if len(pc.Keys) != len(pc.LastBalances) {
 			pc.LastBalances = nil
@@ -619,9 +622,9 @@ func (a *App) fetchAll() []fetcher.QuotaResult {
 	return results
 }
 
-// applyAutoBudget 余额型渠道自动更新预算:
-// 成功的余额型结果与本凭证组上次余额比较,余额增加视为充值,将新余额写入渠道预算;
-// 同时刷新各组余额基线并落盘;最后用最新配置预算重算消耗百分比。
+// applyAutoBudget 余额型凭证组自动更新预算:
+// 成功的余额型结果与本凭证组上次余额比较,余额增加视为充值,将该凭证组的预算更新为新余额;
+// 同时刷新各组余额基线并落盘;最后用各凭证组的预算重算消耗百分比。
 func (a *App) applyAutoBudget(results []fetcher.QuotaResult) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -631,7 +634,6 @@ func (a *App) applyAutoBudget(results []fetcher.QuotaResult) {
 		idx[a.cfg.Providers[i].ID] = i
 	}
 
-	newBudget := map[string]float64{} // 渠道 id → 充值后的新预算(多 key 取最大)
 	changed := false
 	for i := range results {
 		r := &results[i]
@@ -649,8 +651,13 @@ func (a *App) applyAutoBudget(results []fetcher.QuotaResult) {
 			last = pc.LastBalances[r.KeyIndex]
 		}
 		if fetcher.DetectRecharge(*r, last, hasLast) {
-			if b, seen := newBudget[r.ID]; !seen || r.Balance > b {
-				newBudget[r.ID] = r.Balance
+			// 充值 → 该凭证组的预算 = 新余额(仅此组,不影响同渠道其它凭证)
+			for len(pc.Budgets) <= r.KeyIndex {
+				pc.Budgets = append(pc.Budgets, 0)
+			}
+			if pc.Budgets[r.KeyIndex] != r.Balance {
+				pc.Budgets[r.KeyIndex] = r.Balance
+				changed = true
 			}
 		}
 		for len(pc.LastBalances) <= r.KeyIndex {
@@ -661,21 +668,17 @@ func (a *App) applyAutoBudget(results []fetcher.QuotaResult) {
 			changed = true
 		}
 	}
-	for id, b := range newBudget {
-		if pc := &a.cfg.Providers[idx[id]]; pc.Budget != b {
-			pc.Budget = b
-			changed = true
-		}
-	}
 	if changed {
 		_ = config.Save(a.cfg)
 	}
 
-	// 用最新预算重算展示值(含未发生变化的渠道,统一走原逻辑)
+	// 用各凭证组的预算重算展示值(含未发生变化的组,统一走原逻辑)
 	for i := range results {
 		b := 0.0
 		if pi, ok := idx[results[i].ID]; ok {
-			b = a.cfg.Providers[pi].Budget
+			if blds := a.cfg.Providers[pi].Budgets; results[i].KeyIndex >= 0 && results[i].KeyIndex < len(blds) {
+				b = blds[results[i].KeyIndex]
+			}
 		}
 		fetcher.ApplyBudget(&results[i], b)
 	}

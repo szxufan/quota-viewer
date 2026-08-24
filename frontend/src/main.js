@@ -11,7 +11,7 @@ const SIZES = {
 let currentView = "ball"; // ball | panel | settings
 let currentResults = [];
 let panelMaxKeys = 1; // 当前结果中单渠道最大凭证数,用于计算面板宽度
-let providerCards = []; // [{id, enabled, groups: [{fields: [{key, input}]}], budget}]
+let providerCards = []; // [{id, enabled, groups: [{fields: [{key, input}], nameInput, budget}]}]
 
 // === 视图切换(统一入口,负责窗口尺寸与屏幕内定位) ===
 function setView(view) {
@@ -381,8 +381,9 @@ function collectProviders() {
             return creds;
         });
         const keyNames = groups.map((g) => (g.nameInput ? g.nameInput.value.trim() : ""));
-        const budget = c.budget ? parseFloat(c.budget.value) || 0 : 0;
-        return { id: c.id, enabled: c.enabled.checked, keys, keyNames, budget };
+        // 每个凭证组的预算与 keys 对齐(0 = 未设);旧渠道级单一预算已废弃
+        const budgets = groups.map((g) => (g.budget ? parseFloat(g.budget.value) || 0 : 0));
+        return { id: c.id, enabled: c.enabled.checked, keys, keyNames, budgets };
     });
 }
 
@@ -435,8 +436,9 @@ function renderProviderList(providers) {
         groupsWrap.className = "provider-groups";
         const groups = [];
         const savedKeys = (p.keys && p.keys.length) ? p.keys : [{}];
+        const budgets = p.budgets || [];
         savedKeys.forEach((k, i) => {
-            groups.push(renderCredGroup(groupsWrap, p, k, groups, (p.key_names || [])[i] || ""));
+            groups.push(renderCredGroup(groupsWrap, p, k, groups, (p.key_names || [])[i] || "", budgets[i] || 0));
         });
         refreshGroupLabels(groupsWrap, groups); // 用最终组数刷新删除按钮显隐
         card.appendChild(groupsWrap);
@@ -446,28 +448,11 @@ function renderProviderList(providers) {
         addBtn.className = "btn-sm add-cred";
         addBtn.textContent = "+ 添加凭证";
         addBtn.addEventListener("click", () => {
-            groups.push(renderCredGroup(groupsWrap, p, {}, groups, ""));
+            groups.push(renderCredGroup(groupsWrap, p, {}, groups, "", 0));
             refreshGroupLabels(groupsWrap, groups); // 新组入列后再刷新
             resizeSettings(); // 内容变高,窗口按需加高
         });
         card.appendChild(addBtn);
-
-        // 余额型 Provider 增加预算输入框
-        let budgetInput = null;
-        if (p.kind === "balance") {
-            const budgetGroup = document.createElement("div");
-            budgetGroup.className = "form-group";
-            const budgetLabel = document.createElement("label");
-            budgetLabel.textContent = "预算(用于进度条计算)";
-            budgetInput = document.createElement("input");
-            budgetInput.type = "number";
-            budgetInput.min = "0";
-            budgetInput.step = "0.01";
-            budgetInput.placeholder = "设为 0 则不计算进度条";
-            if (p.budget > 0) budgetInput.value = p.budget;
-            budgetGroup.append(budgetLabel, budgetInput);
-            card.appendChild(budgetGroup);
-        }
 
         // 勾选限制:最少 1 个(数量无上限)
         cb.addEventListener("change", () => {
@@ -481,14 +466,14 @@ function renderProviderList(providers) {
         });
 
         container.appendChild(card);
-        providerCards.push({ id: p.id, enabled: cb, groups, budget: budgetInput });
+        providerCards.push({ id: p.id, enabled: cb, groups });
     });
 }
 
 // 渲染一组凭证字段(按注册表元数据生成,placeholder 显示掩码值);
 // 组首为可选的显示名输入(详情页用其代替 "Key N");组尾带"删除此凭证"按钮(组数 >1 时显示)。
-// 返回组对象 {fields:[{key,input}], nameInput}。
-function renderCredGroup(wrap, p, creds, groups, name) {
+// 返回组对象 {fields:[{key,input}], nameInput, budget(input|null)}。
+function renderCredGroup(wrap, p, creds, groups, name, budget) {
     const group = document.createElement("div");
     group.className = "provider-group";
 
@@ -525,7 +510,24 @@ function renderCredGroup(wrap, p, creds, groups, name) {
     });
     group.appendChild(fieldsWrap);
 
-    const g = { fields, nameInput };
+    // 余额型凭证组的预算输入(仅 balance 渠道;与同渠道其它凭证组相互独立)
+    let budgetInput = null;
+    if (p.kind === "balance") {
+        const budgetGroup = document.createElement("div");
+        budgetGroup.className = "form-group";
+        const budgetLabel = document.createElement("label");
+        budgetLabel.textContent = "预算(用于进度条计算)";
+        budgetInput = document.createElement("input");
+        budgetInput.type = "number";
+        budgetInput.min = "0";
+        budgetInput.step = "0.01";
+        budgetInput.placeholder = "设为 0 则不计算进度条";
+        if (budget > 0) budgetInput.value = budget;
+        budgetGroup.append(budgetLabel, budgetInput);
+        group.appendChild(budgetGroup);
+    }
+
+    const g = { fields, nameInput, budget: budgetInput };
     const del = document.createElement("button");
     del.className = "btn-sm del-cred";
     del.textContent = "删除此凭证";

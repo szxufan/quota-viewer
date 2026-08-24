@@ -73,7 +73,7 @@ func TestSaveThenLoad_RoundTrip(t *testing.T) {
 				{"workspace_id": "w1", "session_token": "s1"},
 			}},
 			{ID: "mimo", Enabled: false},
-			{ID: "deepseek", Enabled: true, Creds: map[string]string{"api_key": "d1"}, Budget: 500.00},
+			{ID: "deepseek", Enabled: true, Creds: map[string]string{"api_key": "d1"}, Budgets: []float64{500}},
 		},
 		RefreshIntervalMin: 30,
 		BallX:              100,
@@ -115,8 +115,13 @@ func TestSaveThenLoad_RoundTrip(t *testing.T) {
 				}
 			}
 		}
-		if p.Budget != o.Budget {
-			t.Errorf("Providers[%d].Budget mismatch: got %f, want %f", i, p.Budget, o.Budget)
+		if len(p.Budgets) != len(o.Budgets) {
+			t.Errorf("Providers[%d] Budgets count mismatch: got %d, want %d", i, len(p.Budgets), len(o.Budgets))
+		}
+		for bi := range o.Budgets {
+			if bi < len(p.Budgets) && p.Budgets[bi] != o.Budgets[bi] {
+				t.Errorf("Providers[%d].Budgets[%d] mismatch: got %f, want %f", i, bi, p.Budgets[bi], o.Budgets[bi])
+			}
 		}
 	}
 	if loaded.RefreshIntervalMin != 30 {
@@ -265,7 +270,42 @@ func TestCredKeys_Compat(t *testing.T) {
 	}
 }
 
-// Opacity 钳制:缺字段(旧配置)或越界值一律回退为 1.0。
+// 旧渠道级预算(budget)迁移为逐凭证组预算(budgets):
+// 单凭证 → budgets 单值;多凭证 → 每凭证组沿用原渠道预算。
+func TestLoad_MigrateChannelBudgetToPerKey(t *testing.T) {
+	writeConfig(t, `{
+	  "providers": [
+	    {"id": "deepseek", "enabled": true, "keys": [{"api_key": "d1"}], "budget": 100},
+	    {"id": "aliyun", "enabled": true, "keys": [{"api_key": "a1"}, {"api_key": "a2"}], "budget": 500}
+	  ]
+	}`)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	byID := map[string]ProviderConfig{}
+	for _, p := range cfg.Providers {
+		byID[p.ID] = p
+	}
+
+	ds := byID["deepseek"]
+	if ds.Budget != 0 {
+		t.Errorf("deepseek: legacy Budget should be cleared, got %f", ds.Budget)
+	}
+	if len(ds.Budgets) != 1 || ds.Budgets[0] != 100 {
+		t.Errorf("deepseek: expected Budgets=[100], got %v", ds.Budgets)
+	}
+
+	al := byID["aliyun"]
+	if al.Budget != 0 {
+		t.Errorf("aliyun: legacy Budget should be cleared, got %f", al.Budget)
+	}
+	if len(al.Budgets) != 2 || al.Budgets[0] != 500 || al.Budgets[1] != 500 {
+		t.Errorf("aliyun: expected Budgets=[500 500], got %v", al.Budgets)
+	}
+}
+
 func TestLoad_OpacityClamping(t *testing.T) {
 	cases := []struct {
 		name string

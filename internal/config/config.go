@@ -22,7 +22,8 @@ type ProviderConfig struct {
 	Creds        map[string]string   `json:"creds,omitempty"`         // 旧版单凭证(兼容读取;保存后统一升级为 Keys)
 	Keys         []map[string]string `json:"keys,omitempty"`          // 多组凭证(每组一套字段值);空 = 未配置多 key
 	KeyNames     []string            `json:"key_names,omitempty"`     // 各凭证组的显示名(与 Keys 对齐;空 = 详情页回退 "Key N")
-	Budget       float64             `json:"budget,omitempty"`        // 余额型 Provider 的预算总量(0 = 未设)
+	Budget       float64             `json:"budget,omitempty"`        // 旧版渠道级预算(已废弃;Load 时迁移到 Budgets)
+	Budgets      []float64           `json:"budgets,omitempty"`       // 各凭证组的预算(与 Keys 对齐;0 = 该组未设)
 	LastBalances []float64           `json:"last_balances,omitempty"` // 各凭证组上次抓取到的余额(充值检测基线)
 }
 
@@ -147,7 +148,49 @@ func Load() (*Config, error) {
 		cfg.Opacity = 1
 	}
 
+	// 预算从旧渠道级迁移为逐凭证组,并对齐到当前凭证组数
+	if migrateBudgets(cfg) {
+		_ = Save(cfg) // 迁移后立即回写,失败静默(下次 Load 会再尝试)
+	}
+
 	return cfg, nil
+}
+
+// migrateBudgets 把旧版渠道级预算(Budget)迁移为逐凭证组预算(Budgets),
+// 并保证 Budgets 与凭证组数量对齐。旧值迁移到各组(每凭证组沿用原渠道预算)。
+// 返回是否发生改动(需要回写)。
+func migrateBudgets(cfg *Config) bool {
+	changed := false
+	for i := range cfg.Providers {
+		p := &cfg.Providers[i]
+		n := len(p.CredKeys())
+		// 旧渠道级预算 → 逐组预算;仅当尚无逐组预算时迁移,避免覆盖已有值
+		if p.Budget > 0 && len(p.Budgets) == 0 {
+			if n == 0 {
+				n = 1
+			}
+			p.Budgets = make([]float64, n)
+			for k := range p.Budgets {
+				p.Budgets[k] = p.Budget
+			}
+			p.Budget = 0
+			changed = true
+		} else if len(p.Budgets) > 0 && n != len(p.Budgets) {
+			p.Budgets = AlignBudgets(p.Budgets, n)
+			changed = true
+		}
+	}
+	return changed
+}
+
+// AlignBudgets 把预算切片对齐到 n 个凭证组:
+// 返回长度 = n,不足补 0(该组未设),超出截断。用于保存与迁移。
+func AlignBudgets(b []float64, n int) []float64 {
+	out := make([]float64, n)
+	for i := 0; i < n && i < len(b); i++ {
+		out[i] = b[i]
+	}
+	return out
 }
 
 // migrateFromLegacy 把旧版扁平配置迁移为 providers 结构。
