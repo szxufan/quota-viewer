@@ -74,7 +74,7 @@ func TestGLM_OK_ParsesQuota(t *testing.T) {
 	if result.Used != 1 {
 		t.Errorf("expected Used=1, got %f", result.Used)
 	}
-	if !strings.Contains(result.Remaining, "5小时") || !strings.Contains(result.Remaining, "1个月") {
+	if !strings.Contains(result.Remaining, "5小时") || !strings.Contains(result.Remaining, "1周") {
 		t.Errorf("expected both windows in Remaining, got %s", result.Remaining)
 	}
 	if !strings.Contains(result.Remaining, "1 / 28,000") {
@@ -85,7 +85,7 @@ func TestGLM_OK_ParsesQuota(t *testing.T) {
 	}
 }
 
-func TestGLM_MonthWindowHigherPercent_Chosen(t *testing.T) {
+func TestGLM_WeeklyWindowHigherPercent_Chosen(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte(`{
@@ -122,7 +122,7 @@ func TestGLM_MonthWindowHigherPercent_Chosen(t *testing.T) {
 	if result.Error != "" {
 		t.Fatalf("unexpected error: %s", result.Error)
 	}
-	// 月窗口已用 150/200=75% > 小时窗口 10/100=10%
+	// 周窗口已用 150/200=75% > 小时窗口 10/100=10%
 	if result.Total != 200 {
 		t.Errorf("expected Total=200, got %f", result.Total)
 	}

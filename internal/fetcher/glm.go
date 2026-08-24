@@ -12,8 +12,9 @@ import (
 // 端点: GET https://bigmodel.cn/api/monitor/usage/quota/limit
 // 认证: authorization: <token>(浏览器 F12 复制),可选 bigmodel-organization / bigmodel-project 头。
 //
-// 响应 data.limits 为多窗口额度列表(unit=3 小时窗口 / unit=6 月窗口),
+// 响应 data.limits 为多窗口额度列表(unit=3 小时窗口 / unit=6 周窗口),
 // 其中 usage 为窗口总额度,remaining 为剩余,used = usage - remaining。
+// 注:unit=6 在 Coding Plan 官网页面上展示为周额度,故标签按周展示。
 type GLMFetcher struct {
 	token   string
 	org     string
@@ -50,13 +51,13 @@ type glmLimit struct {
 // glmUnitNames unit 枚举 → 窗口标签时间单位名(未知 unit 回退为 "窗口")。
 var glmUnitNames = map[int]string{
 	3: "小时",
-	6: "个月",
+	6: "周",
 }
 
 // glmHourUnits 小时级窗口(unit=3),相同百分比时优先展示。
 var glmHourUnits = map[int]bool{3: true}
 
-// glmWindowLabel 生成窗口标签,如 "5小时" / "1个月"。
+// glmWindowLabel 生成窗口标签,如 "5小时" / "1周"。
 func glmWindowLabel(number, unit int) string {
 	name, ok := glmUnitNames[unit]
 	if !ok {
@@ -125,7 +126,7 @@ func (f *GLMFetcher) Fetch() QuotaResult {
 		return result
 	}
 
-	// 收集所有窗口(5小时/月),按百分比最高选主窗口;
+	// 收集所有窗口(5小时/周),按百分比最高选主窗口;
 	// 相同百分比时小时窗口优先,与 Kimi 规则一致。
 	type glmWindow struct {
 		priority   int // 越小越优先(小时窗口 0,其余 1)
