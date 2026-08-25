@@ -119,7 +119,8 @@ func (f *AliyunFetcher) Fetch() QuotaResult {
 	}
 
 	amountStr := strings.TrimSpace(body.Data.AvailableAmount)
-	balance, err := strconv.ParseFloat(amountStr, 64)
+	// 余额 >= 1000 时阿里云返回带千位分隔符的字符串(如 "1,391.95"),解析前先移除逗号。
+	balance, err := strconv.ParseFloat(strings.ReplaceAll(amountStr, ",", ""), 64)
 	if err != nil {
 		result.Error = fmt.Sprintf("解析余额失败: %q", amountStr)
 		return result

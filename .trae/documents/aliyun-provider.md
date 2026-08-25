@@ -46,7 +46,7 @@
 5. 状态码处理：
    - 非 200：尝试解析响应体的 `Message`/`Code`，有则用 `fmt.Sprintf("阿里云 API 错误: %s (%s)")`，否则 `HTTP %d`；403 特判为 "AccessKey 无效或无权限"
    - 200 但 `Success=false`：`Error = fmt.Sprintf("阿里云 API 错误: %s (%s)", Message, Code)`
-6. 解析 `Data.AvailableAmount`（`strconv.ParseFloat`，先 `strings.TrimSpace`）→ `Balance`；`Data.Currency` → `Currency`
+6. 解析 `Data.AvailableAmount`（先 `strings.TrimSpace`，再移除千位分隔符逗号——余额 ≥ 1000 时阿里云返回 `"1,391.95"` 这类带逗号字符串，`strconv.ParseFloat` 无法直接解析，然后 `strconv.ParseFloat`）→ `Balance`；`Data.Currency` → `Currency`
 7. `Remaining = fmt.Sprintf("余额 %s%s (%s)", currencySymbol(currency), availableAmount, currency)`（复用 deepseek.go 已有的 `currencySymbol`，CNY→¥ / USD→$ / 其他→""；JPY 走默认空符号直接显示数值）
 
 辅助函数（同文件内，小写不导出）：

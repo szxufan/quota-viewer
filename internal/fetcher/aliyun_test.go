@@ -80,6 +80,40 @@ func TestAliyunFetcher_OK_ParsesBalance(t *testing.T) {
 	}
 }
 
+// TestAliyunFetcher_OK_ParsesThousandsSeparator 覆盖余额 >= 1000 时阿里云返回
+// 带千位分隔符的 AvailableAmount(如 "1,391.95"),验证可正常解析且 Remaining 保留原始显示。
+func TestAliyunFetcher_OK_ParsesThousandsSeparator(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{
+			"Code": "200",
+			"Message": "success",
+			"Success": true,
+			"Data": {
+				"AvailableAmount": "1,391.95",
+				"Currency": "CNY"
+			}
+		}`))
+	}))
+	defer server.Close()
+
+	f := NewAliyunFetcher("ak-test", "sk-test")
+	f.apiURL = server.URL
+	result := f.Fetch()
+	if result.Error != "" {
+		t.Fatalf("unexpected error: %s", result.Error)
+	}
+	if result.Balance != 1391.95 {
+		t.Errorf("expected Balance=1391.95, got %f", result.Balance)
+	}
+	if result.Currency != "CNY" {
+		t.Errorf("expected Currency=CNY, got %s", result.Currency)
+	}
+	if !strings.Contains(result.Remaining, "1,391.95") {
+		t.Errorf("expected original display '1,391.95' in Remaining, got %q", result.Remaining)
+	}
+}
+
 // TestAliyunSignature_OfficialExample 用阿里云官方签名机制文档的示例数据验证签名实现。
 // 参数与期望签名均来自官方文档(Request signatures / RPC 签名机制)。
 func TestAliyunSignature_OfficialExample(t *testing.T) {
