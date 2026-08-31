@@ -1,10 +1,21 @@
 package fetcher
 
-// CredentialField 描述一个 Provider 的凭证字段(驱动前端动态渲染输入框)。
-type CredentialField struct {
-	Key   string `json:"key"`
+// FieldOption 是 select 型字段的一个可选项(Value 存入配置,Label 展示给用户)。
+type FieldOption struct {
+	Value string `json:"value"`
 	Label string `json:"label"`
-	Type  string `json:"type"` // "password" | "text" | "textarea"
+}
+
+// CredentialField 描述一个 Provider 的凭证字段(驱动前端动态渲染输入框)。
+// Type="select" 时前端按 Options 渲染复选框组(Multiple 固定为多选语义),
+// 选中值以逗号拼接存入凭证(如 "ots,flowbag")。
+type CredentialField struct {
+	Key      string        `json:"key"`
+	Label    string        `json:"label"`
+	Type     string        `json:"type"`               // "password" | "text" | "textarea" | "select"
+	Options  []FieldOption `json:"options,omitempty"`  // Type="select" 时的可选项
+	Multiple bool          `json:"multiple,omitempty"` // Type="select" 时是否允许多选
+	Plain    bool          `json:"plain,omitempty"`    // 非敏感字段:不掩码,设置界面原样回显
 }
 
 // ProviderDef 描述一个可配置的 Provider(注册表条目)。
@@ -124,9 +135,20 @@ var registry = []ProviderDef{
 		Fields: []CredentialField{
 			{Key: "access_key_id", Label: "AccessKey ID", Type: "text"},
 			{Key: "access_key_secret", Label: "AccessKey Secret", Type: "password"},
+			{
+				Key: "package_types", Label: "云资源包用量(可选,多选)", Type: "select",
+				Multiple: true, Plain: true,
+				Options: []FieldOption{
+					{Value: "ots", Label: "OTS 资源包(TableStore)"},
+					{Value: "flowbag", Label: "VPC 共享流量包"},
+					{Value: "cdt", Label: "CDT 流量包"},
+				},
+			},
 		},
 		Build: func(creds map[string]string) Fetcher {
-			return NewAliyunFetcher(creds["access_key_id"], creds["access_key_secret"])
+			f := NewAliyunFetcher(creds["access_key_id"], creds["access_key_secret"])
+			f.packageTypes = ParseAliyunPackageTypes(creds["package_types"])
+			return f
 		},
 	},
 }

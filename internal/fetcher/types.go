@@ -37,3 +37,20 @@ type QuotaResult struct {
 type Fetcher interface {
 	Fetch() QuotaResult
 }
+
+// MultiFetcher 是可选接口:一次抓取可返回多条结果的 fetcher 实现它
+// (如阿里云:账户余额 + 按所选资源包类型各一条用量结果)。
+// 未实现该接口的 fetcher 由 BuildAndFetch 包装为单条结果。
+type MultiFetcher interface {
+	FetchMulti() []QuotaResult
+}
+
+// BuildAndFetch 用 Provider 定义构建 fetcher 并抓取,统一返回结果切片。
+// 实现 MultiFetcher 的 fetcher 返回其全部结果;否则包装为单元素切片。
+func BuildAndFetch(def ProviderDef, creds map[string]string) []QuotaResult {
+	f := def.Build(creds)
+	if mf, ok := f.(MultiFetcher); ok {
+		return mf.FetchMulti()
+	}
+	return []QuotaResult{f.Fetch()}
+}

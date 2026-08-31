@@ -550,6 +550,26 @@ html, body {
 .provider-fields .form-group { margin-bottom: 8px; }
 .provider-fields .form-group:last-child { margin-bottom: 0; }
 
+/* === select 字段复选框组(如阿里云资源包类型) === */
+.field-options { display: flex; flex-direction: column; gap: 6px; }
+.field-option {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 0;
+    font-size: 12px;
+    color: var(--text-1);
+    cursor: pointer;
+}
+.field-option input[type="checkbox"] {
+    width: auto;
+    padding: 0;
+    background: transparent;
+    border: none;
+    accent-color: var(--accent);
+    cursor: pointer;
+}
+
 /* === 多凭证横向标签 === */
 .cred-tabs {
     display: flex;

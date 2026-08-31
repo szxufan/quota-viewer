@@ -139,21 +139,46 @@ func (a *App) GetConfig() map[string]interface{} {
 	providers := make([]map[string]interface{}, 0, len(fetcher.GetAll()))
 	for _, def := range fetcher.GetAll() {
 		pc, ok := cur[def.ID]
+		// plain 字段(如资源包类型选择)非敏感,回显原值不掩码
+		plainKeys := make(map[string]bool, len(def.Fields))
+		for _, f := range def.Fields {
+			if f.Plain {
+				plainKeys[f.Key] = true
+			}
+		}
 		keys := make([]map[string]string, 0)
 		if ok {
 			for _, k := range pc.CredKeys() {
 				masked := make(map[string]string, len(k))
 				for fk, v := range k {
-					masked[fk] = maskSecret(v)
+					if plainKeys[fk] {
+						masked[fk] = v
+					} else {
+						masked[fk] = maskSecret(v)
+					}
 				}
 				keys = append(keys, masked)
 			}
 		}
-		fields := make([]map[string]string, 0, len(def.Fields))
+		fields := make([]map[string]interface{}, 0, len(def.Fields))
 		for _, f := range def.Fields {
-			fields = append(fields, map[string]string{
+			fm := map[string]interface{}{
 				"key": f.Key, "label": f.Label, "type": f.Type,
-			})
+			}
+			if len(f.Options) > 0 {
+				opts := make([]map[string]string, 0, len(f.Options))
+				for _, o := range f.Options {
+					opts = append(opts, map[string]string{"value": o.Value, "label": o.Label})
+				}
+				fm["options"] = opts
+			}
+			if f.Multiple {
+				fm["multiple"] = true
+			}
+			if f.Plain {
+				fm["plain"] = true
+			}
+			fields = append(fields, fm)
 		}
 		providers = append(providers, map[string]interface{}{
 			"id":        def.ID,
@@ -588,34 +613,55 @@ func (a *App) fetchAll() []fetcher.QuotaResult {
 		updates []credUpdate
 	)
 
-	results := make([]fetcher.QuotaResult, len(jobs))
+	jobResults := make([][]fetcher.QuotaResult, len(jobs))
 	var wg sync.WaitGroup
 	for i, j := range jobs {
 		def, ok := fetcher.Get(j.providerID)
 		if !ok {
-			results[i] = fetcher.QuotaResult{Platform: j.providerID, Error: "未知平台"}
+			jobResults[i] = []fetcher.QuotaResult{{Platform: j.providerID, Error: "未知平台"}}
 			continue
 		}
 		wg.Add(1)
 		go func(i int, j job, def fetcher.ProviderDef) {
 			defer wg.Done()
-			r := def.Build(j.creds).Fetch()
-			if len(r.UpdatedCreds) > 0 {
-				updMu.Lock()
-				updates = append(updates, credUpdate{providerID: j.providerID, keyIdx: j.keyIdx, creds: r.UpdatedCreds})
-				updMu.Unlock()
+			// 一次抓取可能返回多条结果(如阿里云:余额 + 各资源包类型用量)
+			rs := fetcher.BuildAndFetch(def, j.creds)
+			for k := range rs {
+				r := &rs[k]
+				if len(r.UpdatedCreds) > 0 {
+					updMu.Lock()
+					updates = append(updates, credUpdate{providerID: j.providerID, keyIdx: j.keyIdx, creds: r.UpdatedCreds})
+					updMu.Unlock()
+				}
+				// ID/Abbr/KeyName 仅在抓取器未自行设置时回填
+				// (多结果抓取器可为每条结果指定独立分组与缩写,如资源包按类型成组)
+				if r.ID == "" {
+					r.ID = def.ID
+				}
+				if r.Abbr == "" {
+					r.Abbr = def.Abbr
+				}
+				r.KeyIndex = j.keyIdx
+				if r.KeyName == "" {
+					r.KeyName = j.keyName
+				} else if j.keyName != "" {
+					// 凭证组名 + 子结果名(多账号场景区分账号)
+					r.KeyName = j.keyName + " · " + r.KeyName
+				}
+				if r.Kind == "" {
+					r.Kind = fetcher.KindUsage
+				}
 			}
-			r.ID = def.ID
-			r.Abbr = def.Abbr
-			r.KeyIndex = j.keyIdx
-			r.KeyName = j.keyName
-			if r.Kind == "" {
-				r.Kind = fetcher.KindUsage
-			}
-			results[i] = r
+			jobResults[i] = rs
 		}(i, j, def)
 	}
 	wg.Wait()
+
+	// 按 job 顺序(注册表顺序 × 凭证组顺序)展平
+	results := make([]fetcher.QuotaResult, 0, len(jobs))
+	for _, rs := range jobResults {
+		results = append(results, rs...)
+	}
 
 	a.persistCredUpdates(updates)
 	a.applyAutoBudget(results)

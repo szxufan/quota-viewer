@@ -1,7 +1,7 @@
 // === Wails 绑定 ===
 // window.go.main.App 在运行时由 Wails 注入
 
-import { credTabLabel, groupHasData, providerBadgeText } from "./settings-helpers.js";
+import { credTabLabel, groupHasData, parseOptionValues, providerBadgeText } from "./settings-helpers.js";
 
 // 各视图窗口尺寸,与 Go 侧 ballSize 常量保持一致
 const SIZES = {
@@ -529,6 +529,37 @@ function renderCredGroup(cardObj, creds, name, budget) {
         fg.className = "form-group";
         const label = document.createElement("label");
         label.textContent = f.label;
+        if (f.type === "select") {
+            // 复选框组(多选):隐藏 input 承载逗号拼接值,collectProviders 统一读取。
+            // select 字段为 plain(不掩码),直接用已存值初始化勾选状态。
+            const hidden = document.createElement("input");
+            hidden.type = "hidden";
+            const saved = parseOptionValues((creds && creds[f.key]) || "", f.options || []);
+            hidden.value = saved.join(",");
+            const wrap = document.createElement("div");
+            wrap.className = "field-options";
+            (f.options || []).forEach((opt) => {
+                const optLabel = document.createElement("label");
+                optLabel.className = "field-option";
+                const cb = document.createElement("input");
+                cb.type = "checkbox";
+                cb.value = opt.value; // 必须显式设置,否则默认值 "on" 会污染存储值
+                cb.checked = saved.includes(opt.value);
+                cb.addEventListener("change", () => {
+                    const checked = wrap.querySelectorAll("input[type='checkbox']:checked");
+                    hidden.value = Array.from(checked).map((x) => x.value).join(",");
+                    updateProviderBadge(cardObj);
+                });
+                const text = document.createElement("span");
+                text.textContent = opt.label;
+                optLabel.append(cb, text);
+                wrap.appendChild(optLabel);
+            });
+            fg.append(label, wrap, hidden);
+            fieldsWrap.appendChild(fg);
+            fields.push({ key: f.key, input: hidden });
+            return;
+        }
         const input = document.createElement(f.type === "textarea" ? "textarea" : "input");
         if (f.type === "password") input.type = "password";
         if (f.type === "text") input.type = "text";

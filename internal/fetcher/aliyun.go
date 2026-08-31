@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -16,14 +17,17 @@ import (
 	"time"
 )
 
-// AliyunFetcher 通过阿里云 BssOpenApi QueryAccountBalance 接口查询账户余额。
-// 端点: GET https://business.aliyuncs.com/?Action=QueryAccountBalance&...
+// AliyunFetcher 通过阿里云 BssOpenApi 查询账户余额与云资源包用量。
+// 端点: GET https://business.aliyuncs.com/?Action=...
 // 认证: AccessKey ID + AccessKey Secret,RPC 风格 HMAC-SHA1 签名。
 // 余额型 Provider: Kind=balance,Percent 无意义(恒 0),Remaining 展示余额。
+// 配置 packageTypes 后额外查询云资源包用量(见 aliyun_package.go),
+// 通过 FetchMulti 返回 余额 + 每选中类型一条用量结果。
 type AliyunFetcher struct {
 	accessKeyID     string
 	accessKeySecret string
 	apiURL          string // 可为空,默认为线上端点(便于测试覆盖)
+	packageTypes    []string // 选中的资源包类型值(如 "ots","flowbag","cdt");空 = 不查资源包
 }
 
 func NewAliyunFetcher(accessKeyID, accessKeySecret string) *AliyunFetcher {
@@ -54,67 +58,18 @@ func (f *AliyunFetcher) Fetch() QuotaResult {
 		return result
 	}
 
-	base := f.apiURL
-	if base == "" {
-		base = "https://business.aliyuncs.com"
-	}
-
-	nonce, err := aliyunNonce()
-	if err != nil {
-		result.Error = fmt.Sprintf("生成签名随机数失败: %v", err)
-		return result
-	}
-
-	params := map[string]string{
-		"Action":           "QueryAccountBalance",
-		"Format":           "JSON",
-		"Version":          "2017-12-14",
-		"AccessKeyId":      f.accessKeyID,
-		"SignatureMethod":  "HMAC-SHA1",
-		"SignatureVersion": "1.0",
-		"SignatureNonce":   nonce,
-		"Timestamp":        time.Now().UTC().Format("2006-01-02T15:04:05Z"),
-	}
-	params["Signature"] = aliyunSignature(params, f.accessKeySecret)
-
-	reqURL := base + "?" + aliyunQueryString(params)
-
-	client := &http.Client{Timeout: 10 * time.Second}
-	req, err := http.NewRequest("GET", reqURL, nil)
-	if err != nil {
-		result.Error = fmt.Sprintf("创建请求失败: %v", err)
-		return result
-	}
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := client.Do(req)
-	if err != nil {
-		result.Error = fmt.Sprintf("请求失败: %v", err)
-		return result
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode == 403 {
-		result.Error = "AccessKey 无效或无权限"
-		return result
-	}
-
 	var body aliyunBalanceResponse
-	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
-		if resp.StatusCode != 200 {
-			result.Error = fmt.Sprintf("HTTP %d", resp.StatusCode)
-			return result
-		}
-		result.Error = fmt.Sprintf("解析响应失败: %v", err)
+	if err := f.callBssAPI("QueryAccountBalance", "2017-12-14", nil, &body); err != nil {
+		result.Error = err.Error()
 		return result
 	}
 
-	if resp.StatusCode != 200 || !body.Success {
+	if !body.Success {
 		if body.Message != "" {
 			result.Error = fmt.Sprintf("阿里云 API 错误: %s (%s)", body.Message, body.Code)
 			return result
 		}
-		result.Error = fmt.Sprintf("HTTP %d", resp.StatusCode)
+		result.Error = "阿里云 API 返回失败"
 		return result
 	}
 
@@ -130,6 +85,66 @@ func (f *AliyunFetcher) Fetch() QuotaResult {
 	result.Currency = body.Data.Currency
 	result.Remaining = fmt.Sprintf("余额 %s%s (%s)", currencySymbol(body.Data.Currency), amountStr, body.Data.Currency)
 	return result
+}
+
+// callBssAPI 向 BssOpenApi 端点发起一次签名 GET 请求并把 JSON 响应解码到 out。
+// extra 为业务参数(可空);返回传输层/解析层错误,业务成败(信封 Success 字段)由调用方判断。
+// 注意:2017-12-14 版响应含 Success/Code/Message 信封;2023-09-30 版没有,调用方按结构自行处理。
+func (f *AliyunFetcher) callBssAPI(action, version string, extra map[string]string, out interface{}) error {
+	base := f.apiURL
+	if base == "" {
+		base = "https://business.aliyuncs.com"
+	}
+
+	nonce, err := aliyunNonce()
+	if err != nil {
+		return fmt.Errorf("生成签名随机数失败: %v", err)
+	}
+
+	params := map[string]string{
+		"Action":           action,
+		"Format":           "JSON",
+		"Version":          version,
+		"AccessKeyId":      f.accessKeyID,
+		"SignatureMethod":  "HMAC-SHA1",
+		"SignatureVersion": "1.0",
+		"SignatureNonce":   nonce,
+		"Timestamp":        time.Now().UTC().Format("2006-01-02T15:04:05Z"),
+	}
+	for k, v := range extra {
+		params[k] = v
+	}
+	params["Signature"] = aliyunSignature(params, f.accessKeySecret)
+
+	reqURL := base + "?" + aliyunQueryString(params)
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	req, err := http.NewRequest("GET", reqURL, nil)
+	if err != nil {
+		return fmt.Errorf("创建请求失败: %v", err)
+	}
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("请求失败: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == 403 {
+		return errors.New("AccessKey 无效或无权限")
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
+		if resp.StatusCode != 200 {
+			return fmt.Errorf("HTTP %d", resp.StatusCode)
+		}
+		return fmt.Errorf("解析响应失败: %v", err)
+	}
+	if resp.StatusCode != 200 {
+		return fmt.Errorf("HTTP %d", resp.StatusCode)
+	}
+	return nil
 }
 
 // aliyunPercentEncode 按阿里云 RPC 签名规则做 RFC3986 编码:

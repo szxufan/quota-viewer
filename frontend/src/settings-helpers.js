@@ -19,3 +19,17 @@ export function providerBadgeText(groups) {
     const n = groups.filter(groupHasData).length;
     return n > 0 ? `${n} 个凭证` : "未配置";
 }
+
+// 解析 select 型字段存储的逗号拼接值(如 "ots,cdt")为合法选项值数组:
+// 去空白、过滤未知值、去重,并按 options 的固定顺序返回(保证回显稳定)。
+// options: [{value, label}]。
+export function parseOptionValues(value, options) {
+    const vals = String(value || "")
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
+    const selected = new Set(vals);
+    return (options || [])
+        .map((o) => o.value)
+        .filter((v, i, arr) => selected.has(v) && arr.indexOf(v) === i);
+}

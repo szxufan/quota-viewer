@@ -1,7 +1,7 @@
 // settings-helpers.js 单测(Node 内置 node:test,零依赖;运行:cd frontend && npm test)
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { credTabLabel, groupHasData, providerBadgeText } from "../src/settings-helpers.js";
+import { credTabLabel, groupHasData, parseOptionValues, providerBadgeText } from "../src/settings-helpers.js";
 
 test("credTabLabel: 优先显示名", () => {
     assert.equal(credTabLabel("工作号", 0), "工作号");
@@ -39,4 +39,39 @@ test("providerBadgeText: 按非空组数量显示", () => {
     assert.equal(providerBadgeText([g1]), "1 个凭证");
     assert.equal(providerBadgeText([g1, g2]), "2 个凭证");
     assert.equal(providerBadgeText([g1, gEmpty, g2]), "2 个凭证"); // 空组不计数
+});
+
+const PKG_OPTIONS = [
+    { value: "ots", label: "OTS 资源包" },
+    { value: "flowbag", label: "VPC 共享流量包" },
+    { value: "cdt", label: "CDT 流量包" },
+];
+
+test("parseOptionValues: 空值与空选项", () => {
+    assert.deepEqual(parseOptionValues("", PKG_OPTIONS), []);
+    assert.deepEqual(parseOptionValues(undefined, PKG_OPTIONS), []);
+    assert.deepEqual(parseOptionValues(null, PKG_OPTIONS), []);
+    assert.deepEqual(parseOptionValues("ots", []), []);
+    assert.deepEqual(parseOptionValues("ots", undefined), []);
+});
+
+test("parseOptionValues: 解析逗号拼接值", () => {
+    assert.deepEqual(parseOptionValues("ots", PKG_OPTIONS), ["ots"]);
+    assert.deepEqual(parseOptionValues("ots,cdt", PKG_OPTIONS), ["ots", "cdt"]);
+});
+
+test("parseOptionValues: 去空白、去重、过滤未知值", () => {
+    assert.deepEqual(parseOptionValues(" ots , flowbag ", PKG_OPTIONS), ["ots", "flowbag"]);
+    assert.deepEqual(parseOptionValues("ots,ots,cdt", PKG_OPTIONS), ["ots", "cdt"]);
+    assert.deepEqual(parseOptionValues("unknown,ots", PKG_OPTIONS), ["ots"]);
+    assert.deepEqual(parseOptionValues("unknown", PKG_OPTIONS), []);
+});
+
+test("parseOptionValues: 按选项定义顺序返回(与存储顺序无关)", () => {
+    assert.deepEqual(parseOptionValues("cdt,ots", PKG_OPTIONS), ["ots", "cdt"]);
+});
+
+test("parseOptionValues: 过滤复选框默认值 on(回归:未设 cb.value 时的脏数据)", () => {
+    assert.deepEqual(parseOptionValues("on", PKG_OPTIONS), []);
+    assert.deepEqual(parseOptionValues("on,on", PKG_OPTIONS), []);
 });
