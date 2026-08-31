@@ -11,9 +11,10 @@
 | 阶梯 | 命令 | 覆盖 |
 |---|---|---|
 | 1. Go 单测 | `go test ./...` | config、fetcher 全部逻辑 |
-| 2. 前端构建 | `cd frontend && npm run build` | 前端语法/打包正确性 |
-| 3. 完整构建 | `wails build` | 绑定生成 + embed + 打包 |
-| 4. 手动冒烟 | 运行 exe | 窗口定位、托盘、真实抓取（需真实凭证） |
+| 2. 前端单测 | `cd frontend && npm test` | settings-helpers 纯函数(node:test,零依赖) |
+| 3. 前端构建 | `cd frontend && npm run build` | 前端语法/打包正确性 |
+| 4. 完整构建 | `wails build` | 绑定生成 + embed + 打包 |
+| 5. 手动冒烟 | 运行 exe | 窗口定位、托盘、真实抓取（需真实凭证） |
 
 ### 测试分类
 
@@ -24,7 +25,8 @@
 | 注册表 | `internal/fetcher/registry_test.go` | 5 个 Provider、顺序稳定、字段定义完整、Build 可执行不 panic |
 | 托盘 | 无测试 | 依赖 GUI，手工验证 |
 | 窗口定位 | 无测试 | 依赖真实显示器环境，手工验证（多屏/DPI 需实测） |
-| 前端 | 无测试 | 手工验证（当前无测试框架） |
+| 前端纯函数 | `frontend/test/*.test.mjs` | Node 内置 `node --test`（零依赖）；新增可单测的设置界面逻辑放 `settings-helpers.js` |
+| 前端 DOM 交互 | 无测试 | 手工验证（无 jsdom/浏览器测试框架） |
 
 ### 约定
 
@@ -32,7 +34,7 @@
 - 新平台抓取器必须带测试（现有 kimi/xfyun/opencode_go/mimo/deepseek 均有）
 - 新增 Provider 时 registry_test 自动校验定义完整性
 - 配置结构变更必须同步 config_test.go（含迁移用例）
-- 前端无测试框架——UI 改动以构建 + 手动冒烟为准
+- 前端设置界面的可单测逻辑集中在 `frontend/src/settings-helpers.js`，改动后 `npm test` 必须通过；DOM 级交互以构建 + 手动冒烟为准
 
 ---
 
@@ -43,6 +45,7 @@
 | `internal/config/config_test.go` | 配置与 Cookie 解析用例 |
 | `internal/fetcher/kimi_test.go` / `xfyun_test.go` / `opencode_go_test.go` | 抓取器 httptest 用例 |
 | `internal/fetcher/opencode_go_test.go` | 新抓取器用例（未提交） |
+| `frontend/test/settings-helpers.test.mjs` | 设置界面纯函数用例（node --test） |
 
 ---
 

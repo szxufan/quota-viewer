@@ -1,17 +1,22 @@
 // === Wails 绑定 ===
 // window.go.main.App 在运行时由 Wails 注入
 
+import { credTabLabel, groupHasData, providerBadgeText } from "./settings-helpers.js";
+
 // 各视图窗口尺寸,与 Go 侧 ballSize 常量保持一致
 const SIZES = {
     ball: [60, 60],
     panel: [340, 310], // 宽度为基准值:多凭证时每多一列 +50% 加宽(见 resizePanel)
-    settings: [340, 480],
+    settings: [720, 620], // 固定尺寸(账号页左右两栏),内容超出时内部滚动
 };
 
 let currentView = "ball"; // ball | panel | settings
 let currentResults = [];
 let panelMaxKeys = 1; // 当前结果中单渠道最大凭证数,用于计算面板宽度
-let providerCards = []; // [{id, enabled, groups: [{fields: [{key, input}], nameInput, budget}]}]
+// [{id, def, navItem, pane, enabled, badge, navBadge, tabs, pages,
+//   groups: [{fields: [{key, input}], nameInput, budget, page}], active}]
+let providerCards = [];
+let selectedProviderId = null; // 账号页左栏当前选中项(重渲染后尽量保持)
 
 // === 视图切换(统一入口,负责窗口尺寸与屏幕内定位) ===
 function setView(view) {
@@ -300,23 +305,16 @@ document.getElementById("btn-close-settings").addEventListener("click", () => {
     setView("ball");
 });
 
-// === settings 按内容自适应高度(保存按钮始终可见) ===
-async function resizeSettings() {
-    const settings = document.getElementById("settings");
-    const body = settings.querySelector(".settings-body");
-    // 先取消内部滚动限制,测量内容自然高度
-    body.style.maxHeight = "";
-    const natural = settings.offsetHeight;
-    const h = Math.max(SIZES.settings[1], natural);
-    await window.go.main.App.ExpandWindow(SIZES.settings[0], h);
-    // 等待窗口尺寸生效(Go 可能已按屏幕工作区钳制高度),
-    // 再按实际窗口高度给内容区设滚动上限,超高时内部滚动,保存按钮可达
-    setTimeout(() => {
-        const winH = window.innerHeight || h;
-        const headerH = settings.querySelector(".panel-header").offsetHeight;
-        body.style.maxHeight = Math.max(0, winH - headerH) + "px";
-    }, 30);
+// === settings 分 Tab 切换(账号 / 通用) ===
+function switchSettingsTab(tab) {
+    document.querySelectorAll(".settings-tab").forEach((b) =>
+        b.classList.toggle("active", b.dataset.tab === tab));
+    document.querySelectorAll(".settings-tab-pane").forEach((p) =>
+        p.classList.toggle("active", p.id === "tab-" + tab));
 }
+document.querySelectorAll(".settings-tab").forEach((btn) => {
+    btn.addEventListener("click", () => switchSettingsTab(btn.dataset.tab));
+});
 
 // applyOpacity 同步透明度 UI 显示(窗口级透明度由 Go 侧 setWindowOpacity 控制,
 // 前端不再用 CSS opacity,避免与窗口 alpha 双重叠加)
@@ -357,7 +355,6 @@ async function loadConfig() {
         const opacity = typeof cfg.opacity === "number" ? cfg.opacity : 1;
         document.getElementById("input-opacity").value = opacity;
         applyOpacity(opacity);
-        resizeSettings(); // 配置渲染完成后按内容调整窗口高度
     } catch (e) {
         console.error("loadConfig error:", e);
         toast("加载配置失败: " + e, "error");
@@ -387,32 +384,69 @@ function collectProviders() {
     });
 }
 
-// 渲染 Provider 卡片列表(勾选 + 多组凭证 + 预算)
+// 渲染 Provider 列表(左右两栏:左栏导航选择,右栏详情编辑;详情内多凭证横向标签切换)
 function renderProviderList(providers) {
-    const container = document.getElementById("provider-list");
-    container.innerHTML = "";
+    const nav = document.getElementById("provider-nav");
+    const detail = document.getElementById("provider-detail");
+    nav.innerHTML = "";
+    detail.innerHTML = "";
     providerCards = [];
 
     providers.forEach((p) => {
-        const card = document.createElement("div");
-        card.className = "provider-card" + (p.enabled ? "" : " disabled");
-        card.dataset.id = p.id;
+        // --- 左栏导航项:勾选框 + 名称 + 状态徽标 ---
+        const navItem = document.createElement("div");
+        navItem.className = "provider-nav-item" + (p.enabled ? "" : " disabled");
+        navItem.dataset.id = p.id;
 
-        // 头部:勾选框 + 名称 + 动作按钮
-        const head = document.createElement("div");
-        head.className = "provider-head";
-
-        const toggle = document.createElement("label");
-        toggle.className = "provider-toggle";
         const cb = document.createElement("input");
         cb.type = "checkbox";
         cb.className = "provider-check";
         cb.checked = !!p.enabled;
-        const name = document.createElement("span");
+
+        const textWrap = document.createElement("div");
+        textWrap.className = "provider-nav-text";
+        const name = document.createElement("div");
         name.className = "provider-name";
         name.textContent = p.name;
-        toggle.append(cb, name);
+        const navBadge = document.createElement("div");
+        navBadge.className = "provider-nav-badge";
+        textWrap.append(name, navBadge);
 
+        navItem.append(cb, textWrap);
+        nav.appendChild(navItem);
+
+        // --- 右栏详情面板:标题行 + 凭证标签条 + 凭证页 + 动作按钮 ---
+        const pane = document.createElement("div");
+        pane.className = "provider-detail-pane";
+        pane.dataset.id = p.id;
+
+        const head = document.createElement("div");
+        head.className = "provider-detail-head";
+        const title = document.createElement("span");
+        title.className = "provider-name";
+        title.textContent = p.name;
+        const badge = document.createElement("span");
+        badge.className = "provider-badge";
+        head.append(title, badge);
+        pane.appendChild(head);
+
+        const tabs = document.createElement("div");
+        tabs.className = "cred-tabs";
+        const pages = document.createElement("div");
+        pages.className = "cred-pages";
+        pane.append(tabs, pages);
+
+        const cardObj = { id: p.id, def: p, navItem, pane, enabled: cb, badge, navBadge, tabs, pages, groups: [], active: 0 };
+
+        // 凭证页:已有 keys 逐组渲染,否则默认一组空表单
+        const savedKeys = (p.keys && p.keys.length) ? p.keys : [{}];
+        const budgets = p.budgets || [];
+        savedKeys.forEach((k, i) => {
+            cardObj.groups.push(renderCredGroup(cardObj, k, (p.key_names || [])[i] || "", budgets[i] || 0));
+        });
+        refreshCredTabs(cardObj);
+
+        // 动作按钮:测试 / 打开登录页
         const actions = document.createElement("div");
         actions.className = "provider-actions";
         const testBtn = document.createElement("button");
@@ -427,34 +461,13 @@ function renderProviderList(providers) {
             loginBtn.textContent = "打开登录页";
             actions.appendChild(loginBtn);
         }
+        pane.appendChild(actions);
+        detail.appendChild(pane);
 
-        head.append(toggle, actions);
-        card.appendChild(head);
+        // 左栏点击 = 选中查看;勾选框另行处理启用/停用
+        navItem.addEventListener("click", () => selectProvider(p.id));
 
-        // 凭证组:已有 keys 逐组渲染,否则默认一组空表单
-        const groupsWrap = document.createElement("div");
-        groupsWrap.className = "provider-groups";
-        const groups = [];
-        const savedKeys = (p.keys && p.keys.length) ? p.keys : [{}];
-        const budgets = p.budgets || [];
-        savedKeys.forEach((k, i) => {
-            groups.push(renderCredGroup(groupsWrap, p, k, groups, (p.key_names || [])[i] || "", budgets[i] || 0));
-        });
-        refreshGroupLabels(groupsWrap, groups); // 用最终组数刷新删除按钮显隐
-        card.appendChild(groupsWrap);
-
-        // 添加凭证按钮
-        const addBtn = document.createElement("button");
-        addBtn.className = "btn-sm add-cred";
-        addBtn.textContent = "+ 添加凭证";
-        addBtn.addEventListener("click", () => {
-            groups.push(renderCredGroup(groupsWrap, p, {}, groups, "", 0));
-            refreshGroupLabels(groupsWrap, groups); // 新组入列后再刷新
-            resizeSettings(); // 内容变高,窗口按需加高
-        });
-        card.appendChild(addBtn);
-
-        // 勾选限制:最少 1 个(数量无上限)
+        // 勾选限制:最少 1 个(数量无上限);切换后顺带选中该项
         cb.addEventListener("change", () => {
             const enabledCount = providerCards.filter((c) => c.enabled.checked).length;
             if (enabledCount < 1) {
@@ -462,20 +475,37 @@ function renderProviderList(providers) {
                 toast("至少保留 1 个 Provider", "error");
                 return;
             }
-            card.classList.toggle("disabled", !cb.checked);
+            navItem.classList.toggle("disabled", !cb.checked);
+            selectProvider(p.id);
         });
 
-        container.appendChild(card);
-        providerCards.push({ id: p.id, enabled: cb, groups });
+        providerCards.push(cardObj);
+        updateProviderBadge(cardObj);
+    });
+
+    // 保持上次选中项;无则选中第一个
+    const target = providerCards.find((c) => c.id === selectedProviderId) || providerCards[0];
+    if (target) selectProvider(target.id);
+}
+
+// 选中某个 Provider(左栏高亮 + 右栏显示对应详情)
+function selectProvider(id) {
+    selectedProviderId = id;
+    providerCards.forEach((c) => {
+        const active = c.id === id;
+        c.navItem.classList.toggle("active", active);
+        c.pane.classList.toggle("active", active);
     });
 }
 
-// 渲染一组凭证字段(按注册表元数据生成,placeholder 显示掩码值);
-// 组首为可选的显示名输入(详情页用其代替 "Key N");组尾带"删除此凭证"按钮(组数 >1 时显示)。
-// 返回组对象 {fields:[{key,input}], nameInput, budget(input|null)}。
-function renderCredGroup(wrap, p, creds, groups, name, budget) {
-    const group = document.createElement("div");
-    group.className = "provider-group";
+// 渲染一组凭证页(按注册表元数据生成,placeholder 显示掩码值);
+// 组首为可选的显示名输入(实时同步凭证标签文案,详情页用其代替 "Key N");
+// 组尾带"删除此凭证"按钮(组数 >1 时显示)。
+// 返回组对象 {fields:[{key,input}], nameInput, budget(input|null), page}。
+function renderCredGroup(cardObj, creds, name, budget) {
+    const p = cardObj.def;
+    const page = document.createElement("div");
+    page.className = "provider-group cred-page";
 
     // 显示名(可选):用于详情页代替 "Key N" 辨识
     const nameGroup = document.createElement("div");
@@ -487,9 +517,9 @@ function renderCredGroup(wrap, p, creds, groups, name, budget) {
     nameInput.className = "provider-group-name";
     nameInput.placeholder = "详情页标识,如 \"工作号\"";
     if (name) nameInput.value = name;
-    nameInput.addEventListener("input", () => refreshGroupLabels(wrap, groups));
+    nameInput.addEventListener("input", () => refreshCredTabs(cardObj));
     nameGroup.append(nameLabel, nameInput);
-    group.appendChild(nameGroup);
+    page.appendChild(nameGroup);
 
     const fieldsWrap = document.createElement("div");
     fieldsWrap.className = "provider-fields";
@@ -504,11 +534,12 @@ function renderCredGroup(wrap, p, creds, groups, name, budget) {
         if (f.type === "text") input.type = "text";
         if (f.type === "textarea") input.rows = 2;
         input.placeholder = (creds && creds[f.key]) || "";
+        input.addEventListener("input", () => updateProviderBadge(cardObj));
         fg.append(label, input);
         fieldsWrap.appendChild(fg);
         fields.push({ key: f.key, input });
     });
-    group.appendChild(fieldsWrap);
+    page.appendChild(fieldsWrap);
 
     // 余额型凭证组的预算输入(仅 balance 渠道;与同渠道其它凭证组相互独立)
     let budgetInput = null;
@@ -524,41 +555,80 @@ function renderCredGroup(wrap, p, creds, groups, name, budget) {
         budgetInput.placeholder = "设为 0 则不计算进度条";
         if (budget > 0) budgetInput.value = budget;
         budgetGroup.append(budgetLabel, budgetInput);
-        group.appendChild(budgetGroup);
+        page.appendChild(budgetGroup);
     }
 
-    const g = { fields, nameInput, budget: budgetInput };
+    const g = { fields, nameInput, budget: budgetInput, page };
     const del = document.createElement("button");
     del.className = "btn-sm del-cred";
     del.textContent = "删除此凭证";
     del.addEventListener("click", () => {
-        if (groups.length <= 1) return;
-        groups.splice(groups.indexOf(g), 1);
-        wrap.removeChild(group);
-        refreshGroupLabels(wrap, groups);
-        resizeSettings(); // 内容变矮,窗口按需收缩
+        if (cardObj.groups.length <= 1) return;
+        const idx = cardObj.groups.indexOf(g);
+        cardObj.groups.splice(idx, 1);
+        cardObj.pages.removeChild(page);
+        refreshCredTabs(cardObj);
+        setActiveCred(cardObj, Math.min(idx, cardObj.groups.length - 1)); // 激活相邻页
+        updateProviderBadge(cardObj);
     });
-    group.appendChild(del);
+    page.appendChild(del);
 
-    wrap.appendChild(group);
+    cardObj.pages.appendChild(page);
     return g;
 }
 
-// 刷新凭证组标签(显示名或 "凭证 n")与删除按钮可见性
-function refreshGroupLabels(wrap, groups) {
-    Array.from(wrap.children).forEach((el, i) => {
-        let label = el.querySelector(".provider-group-label");
-        if (!label) {
-            label = document.createElement("div");
-            label.className = "provider-group-label";
-            el.insertBefore(label, el.firstChild);
-        }
-        const nameEl = el.querySelector(".provider-group-name");
-        const name = nameEl ? (nameEl.value || "").trim() : "";
-        label.textContent = name || (groups.length > 1 ? `凭证 ${i + 1}` : "");
-        const del = el.querySelector(".del-cred");
-        if (del) del.style.display = groups.length > 1 ? "" : "none";
+// 凭证组快照(值 + 掩码占位),供纯函数判定"非空组",口径与 collectProviders 一致
+function snapshotGroups(cardObj) {
+    return cardObj.groups.map((g) =>
+        g.fields.map((f) => ({ value: f.input.value, placeholder: f.input.placeholder })));
+}
+
+// 更新状态徽标(左栏导航 + 右栏详情标题行,文案:未配置 / n 个凭证)
+function updateProviderBadge(cardObj) {
+    const text = providerBadgeText(snapshotGroups(cardObj));
+    cardObj.badge.textContent = text;
+    cardObj.navBadge.textContent = text;
+}
+
+// 应用当前激活凭证页(标签高亮 + 页面显隐 + 删除按钮显隐)
+function applyCredActive(cardObj) {
+    const tabBtns = cardObj.tabs.querySelectorAll(".cred-tab:not(.add)");
+    tabBtns.forEach((btn, i) => btn.classList.toggle("active", i === cardObj.active));
+    cardObj.groups.forEach((g, i) => {
+        g.page.classList.toggle("active", i === cardObj.active);
+        const del = g.page.querySelector(".del-cred");
+        if (del) del.style.display = cardObj.groups.length > 1 ? "" : "none";
     });
+}
+
+// 切换到第 i 个凭证页(越界钳制)
+function setActiveCred(cardObj, i) {
+    cardObj.active = Math.max(0, Math.min(i, cardObj.groups.length - 1));
+    applyCredActive(cardObj);
+}
+
+// 重建凭证标签条(每组一个标签 + 末尾 "+" 添加按钮),并保持激活态
+function refreshCredTabs(cardObj) {
+    cardObj.tabs.innerHTML = "";
+    cardObj.groups.forEach((g, i) => {
+        const btn = document.createElement("button");
+        btn.className = "cred-tab";
+        btn.textContent = credTabLabel(g.nameInput.value, i);
+        btn.addEventListener("click", () => setActiveCred(cardObj, i));
+        cardObj.tabs.appendChild(btn);
+    });
+    const add = document.createElement("button");
+    add.className = "cred-tab add";
+    add.textContent = "+";
+    add.title = "添加凭证";
+    add.addEventListener("click", () => {
+        cardObj.groups.push(renderCredGroup(cardObj, {}, "", 0));
+        refreshCredTabs(cardObj);
+        setActiveCred(cardObj, cardObj.groups.length - 1); // 切到新页
+        updateProviderBadge(cardObj);
+    });
+    cardObj.tabs.appendChild(add);
+    setActiveCred(cardObj, cardObj.active);
 }
 
 document.getElementById("btn-save-config").addEventListener("click", async () => {

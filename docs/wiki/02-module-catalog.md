@@ -33,9 +33,11 @@
 | 注册表测试 | `internal/fetcher/registry_test.go` | 65 | 注册表完整性 |
 | 系统托盘 | `internal/tray/tray.go` | 104 | 托盘菜单 + 事件转发 + LockOSThread |
 | 托盘图标 | `internal/tray/assets/` | - | icon.ico / icon.png（embed） |
-| 前端 HTML | `frontend/src/index.html` | 57 | 悬浮球/面板/动态配置面板结构 |
-| 前端逻辑 | `frontend/src/main.js` | 338 | 视图状态机、动态球格、配置渲染、交互 |
-| 前端样式 | `frontend/src/style.css` | 390 | 设计令牌 + 深色玻璃质感 + Provider 卡片 |
+| 前端 HTML | `frontend/src/index.html` | 77 | 悬浮球/面板/设置面板(分 Tab + 两栏 + 固定底栏)结构 |
+| 前端逻辑 | `frontend/src/main.js` | 715 | 视图状态机、动态球格、设置渲染(两栏导航 + 凭证标签)、交互 |
+| 设置纯函数 | `frontend/src/settings-helpers.js` | 21 | 凭证标签/徽标/非空组判定(无 DOM 依赖,可单测) |
+| 设置单测 | `frontend/test/settings-helpers.test.mjs` | 42 | node:test 用例(`npm test`) |
+| 前端样式 | `frontend/src/style.css` | 629 | 设计令牌 + 深色玻璃质感 + Provider 两栏布局 |
 | Vite 配置 | `frontend/vite.config.js` | 9 | 构建配置 |
 | 绑定 | `frontend/wailsjs/` | - | Wails 生成的前端绑定(构建生成) |
 

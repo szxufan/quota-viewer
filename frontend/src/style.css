@@ -303,19 +303,79 @@ html, body {
 .btn-ghost.spinning svg { animation: spin 0.8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
-/* === 配置面板 === */
-.settings-body {
-    padding: 14px;
-    /* max-height 由 JS 按窗口高度动态设置(resizeSettings),超屏时启用内部滚动 */
+/* === 配置面板:固定高度纵向布局(头部 + 标签栏 + 内容区 + 底栏) === */
+.settings {
+    width: 720px;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+}
+
+/* 账号 / 通用 标签栏 */
+.settings-tabs {
+    display: flex;
+    gap: 2px;
+    padding: 0 14px;
+    border-bottom: 1px solid var(--hairline);
+    flex: none;
+}
+.settings-tab {
+    padding: 7px 12px;
+    background: none;
+    border: none;
+    border-bottom: 2px solid transparent;
+    color: var(--text-2);
+    font-size: 12px;
+    cursor: pointer;
+    transition: color 0.15s ease, border-color 0.15s ease;
+}
+.settings-tab:hover { color: var(--text-1); }
+.settings-tab.active { color: var(--text-1); border-bottom-color: var(--accent); }
+
+.settings-tab-pane {
+    display: none;
+    flex: 1;
+    min-height: 0;
     overflow-y: auto;
 }
-.settings-body::-webkit-scrollbar { width: 8px; }
-.settings-body::-webkit-scrollbar-track { background: transparent; }
-.settings-body::-webkit-scrollbar-thumb {
+.settings-tab-pane.active { display: block; }
+.settings-tab-pane::-webkit-scrollbar { width: 8px; }
+.settings-tab-pane::-webkit-scrollbar-track { background: transparent; }
+.settings-tab-pane::-webkit-scrollbar-thumb {
     background: rgba(255, 255, 255, 0.14);
     border-radius: 4px;
 }
-.settings-body::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.22); }
+.settings-tab-pane::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.22); }
+
+/* 通用页:内容不多,限宽避免控件被拉得过宽 */
+#tab-general { max-width: 440px; width: 100%; }
+
+/* 账号页:左右两栏(左栏导航 + 右栏详情),两栏各自独立滚动 */
+#tab-accounts { overflow: hidden; }
+#tab-accounts.active { display: flex; }
+.accounts-layout {
+    display: flex;
+    gap: 14px;
+    width: 100%;
+    height: 100%;
+    min-height: 0;
+}
+
+.settings-body {
+    flex: 1;
+    min-height: 0; /* flex 子项可收缩,才能触发内部滚动 */
+    padding: 14px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+/* 保存按钮固定底栏,不随内容滚动 */
+.settings-footer {
+    flex: none;
+    padding: 10px 14px;
+    border-top: 1px solid var(--hairline);
+}
 
 .form-group { margin-bottom: 14px; }
 .form-group label {
@@ -402,60 +462,130 @@ html, body {
 .btn-primary:hover { background: var(--accent-hover); }
 .btn-primary:active { transform: translateY(1px); }
 
-/* === Provider 配置卡片 === */
-.provider-card {
-    margin-bottom: 14px;
-    padding: 10px;
-    border: 1px solid var(--border);
-    border-radius: var(--radius-ctrl);
-    background: rgba(255, 255, 255, 0.03);
-    transition: opacity 0.15s ease;
+/* === Provider 左右两栏 === */
+/* 左栏导航 */
+.provider-nav {
+    width: 200px;
+    flex: none;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    overflow-y: auto;
 }
-.provider-card.disabled { opacity: 0.5; }
-.provider-card.disabled .provider-fields { display: none; }
+.provider-nav::-webkit-scrollbar { width: 8px; }
+.provider-nav::-webkit-scrollbar-track { background: transparent; }
+.provider-nav::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.14);
+    border-radius: 4px;
+}
+.provider-nav::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.22); }
 
-.provider-head {
+.provider-nav-item {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    margin-bottom: 4px;
-}
-.provider-toggle {
-    display: inline-flex;
-    align-items: center;
     gap: 8px;
+    padding: 8px 10px;
+    border: 1px solid transparent;
+    border-radius: var(--radius-ctrl);
     cursor: pointer;
     user-select: none;
+    transition: background 0.15s ease, border-color 0.15s ease;
 }
+.provider-nav-item:hover { background: var(--surface-hover); }
+.provider-nav-item.active {
+    background: var(--accent-ring);
+    border-color: var(--accent);
+}
+.provider-nav-item.disabled { opacity: 0.55; }
+.provider-nav-text { min-width: 0; }
+.provider-nav-text .provider-name { font-size: 12px; }
+.provider-nav-badge {
+    margin-top: 2px;
+    font-size: 11px;
+    color: var(--text-3);
+}
+
 .provider-check {
     accent-color: var(--accent);
     width: 14px;
     height: 14px;
+    flex: none;
     cursor: pointer;
 }
 .provider-name { font-size: 13px; font-weight: 600; }
-.provider-actions { display: flex; gap: 6px; }
+
+/* 右栏详情 */
+.provider-detail {
+    flex: 1;
+    min-width: 0;
+    overflow-y: auto;
+    padding-left: 14px;
+    border-left: 1px solid var(--hairline);
+}
+.provider-detail::-webkit-scrollbar { width: 8px; }
+.provider-detail::-webkit-scrollbar-track { background: transparent; }
+.provider-detail::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.14);
+    border-radius: 4px;
+}
+.provider-detail::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.22); }
+
+.provider-detail-pane { display: none; }
+.provider-detail-pane.active { display: block; }
+.provider-detail-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 12px;
+}
+.provider-detail-head .provider-name { font-size: 14px; }
+.provider-badge {
+    font-size: 11px;
+    color: var(--text-3);
+    white-space: nowrap;
+}
+
+.provider-actions { display: flex; gap: 6px; margin-top: 10px; }
 .provider-fields { margin-top: 8px; }
 .provider-fields .form-group { margin-bottom: 8px; }
 .provider-fields .form-group:last-child { margin-bottom: 0; }
 
-/* === 多凭证组 === */
-.provider-groups { margin-top: 8px; }
+/* === 多凭证横向标签 === */
+.cred-tabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 10px;
+}
+.cred-tab {
+    padding: 3px 10px;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    color: var(--text-2);
+    font-size: 11px;
+    cursor: pointer;
+    transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+.cred-tab:hover { background: var(--surface-hover); color: var(--text-1); }
+.cred-tab.active {
+    background: var(--accent-ring);
+    border-color: var(--accent);
+    color: var(--text-1);
+}
+.cred-tab.add { font-weight: 600; }
+
+.cred-page { display: none; }
+.cred-page.active { display: block; }
+
 .provider-group {
     padding: 8px;
     border: 1px solid var(--hairline);
     border-radius: 6px;
     background: rgba(255, 255, 255, 0.02);
 }
-.provider-group + .provider-group { margin-top: 10px; }
-.provider-group-label {
-    font-size: 11px;
-    color: var(--text-3);
-    margin-bottom: 6px;
-}
 .provider-group .provider-fields { margin-top: 0; }
 .del-cred { margin-top: 8px; width: 100%; }
-.add-cred { margin-bottom: 10px; width: 100%; }
 
 /* 单格球:字母放大占满整个球 */
 .ball.single-cell .ball-cell { font-size: 20px; }
