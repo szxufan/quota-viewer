@@ -20,6 +20,28 @@ type ProviderConfig struct {
     ID      string            `json:"id"`
     Enabled bool              `json:"enabled"`
     Creds   map[string]string `json:"creds,omitempty"` // 凭证 key 见注册表 Fields
+    // 另有:Keys/KeyNames/Budgets/LastBalances(多凭证组模型);
+    // SyncExcludes []bool `json:"sync_excludes,omitempty"` 凭证组同步排除开关,
+    // 与 Keys 对齐,"排除"语义(零值 = 同步,旧配置默认全量同步),见 11-state-sync.md
+}
+
+// SyncConfig(Config.Sync,json:"sync,omitempty")多机状态同步:
+// Mode(""|publish|subscribe) / Password / OSS*(发布端) / URL(订阅端)
+```
+
+同步配置示例：
+
+```json
+{
+  "sync": {
+    "mode": "publish",
+    "password": "明文存储,下发前端时掩码",
+    "oss_endpoint": "https://oss-cn-hangzhou.aliyuncs.com",
+    "oss_bucket": "my-bucket",
+    "oss_key": "quota/state.enc",
+    "oss_access_id": "LTAI...",
+    "oss_access_secret": "..."
+  }
 }
 ```
 

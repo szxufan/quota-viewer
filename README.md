@@ -49,6 +49,10 @@ wails build
 
 Output: `build/bin/quota-viewer.exe`
 
+## Auto Update & Release
+
+The app checks for updates automatically (30s after launch, then every 6h) and upgrades itself silently via the NSIS installer hosted on Aliyun OSS. See [`docs/AUTO_UPDATE.md`](docs/AUTO_UPDATE.md) for the release workflow (`release.env` + `go run ./cmd/release`).
+
 ## Project Structure
 
 ```

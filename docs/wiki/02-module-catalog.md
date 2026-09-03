@@ -31,11 +31,13 @@
 | DeepSeek 抓取器 | `internal/fetcher/deepseek.go` | 106 | DeepSeek 账户余额(余额型) |
 | DeepSeek 测试 | `internal/fetcher/deepseek_test.go` | 98 | httptest 用例 |
 | 注册表测试 | `internal/fetcher/registry_test.go` | 65 | 注册表完整性 |
+| 状态同步 | `internal/syncstate/` | - | 多机状态同步:载荷/AES-256-GCM 加解密/OSS 上传/公网下载 |
+| 同步编排 | `sync.go` | - | 发布(publishState)/订阅(fetchRemoteState)/凭证过滤/SaveSyncConfig/TestSync |
 | 系统托盘 | `internal/tray/tray.go` | 104 | 托盘菜单 + 事件转发 + LockOSThread |
 | 托盘图标 | `internal/tray/assets/` | - | icon.ico / icon.png（embed） |
 | 前端 HTML | `frontend/src/index.html` | 77 | 悬浮球/面板/设置面板(分 Tab + 两栏 + 固定底栏)结构 |
 | 前端逻辑 | `frontend/src/main.js` | 715 | 视图状态机、动态球格、设置渲染(两栏导航 + 凭证标签)、交互 |
-| 设置纯函数 | `frontend/src/settings-helpers.js` | 21 | 凭证标签/徽标/非空组判定(无 DOM 依赖,可单测) |
+| 设置纯函数 | `frontend/src/settings-helpers.js` | 35 | 凭证标签/徽标/非空组判定/球网格布局 ballGridFor(无 DOM 依赖,可单测) |
 | 设置单测 | `frontend/test/settings-helpers.test.mjs` | 42 | node:test 用例(`npm test`) |
 | 前端样式 | `frontend/src/style.css` | 629 | 设计令牌 + 深色玻璃质感 + Provider 两栏布局 |
 | Vite 配置 | `frontend/vite.config.js` | 9 | 构建配置 |

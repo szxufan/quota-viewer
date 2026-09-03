@@ -11,6 +11,9 @@ import (
 //go:embed all:frontend/dist
 var assets embed.FS
 
+// Version 由发布构建通过 -ldflags "-X main.Version=x.y.z" 注入；开发构建为 "dev"。
+var Version = "dev"
+
 func main() {
 	app := NewApp()
 

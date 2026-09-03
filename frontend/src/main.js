@@ -1,7 +1,7 @@
 // === Wails 绑定 ===
 // window.go.main.App 在运行时由 Wails 注入
 
-import { credTabLabel, groupHasData, parseOptionValues, providerBadgeText } from "./settings-helpers.js";
+import { ballGridFor, credTabLabel, groupHasData, parseOptionValues, providerBadgeText, syncFieldsForMode } from "./settings-helpers.js";
 
 // 各视图窗口尺寸,与 Go 侧 ballSize 常量保持一致
 const SIZES = {
@@ -13,10 +13,14 @@ const SIZES = {
 let currentView = "ball"; // ball | panel | settings
 let currentResults = [];
 let panelMaxKeys = 1; // 当前结果中单渠道最大凭证数,用于计算面板宽度
+let pendingBallSize = 60; // 数据期望的球窗口边长(见 updateBall);收起时若与实际不符由 syncBallSizeOnCollapse 补调
 // [{id, def, navItem, pane, enabled, badge, navBadge, tabs, pages,
 //   groups: [{fields: [{key, input}], nameInput, budget, page}], active}]
 let providerCards = [];
 let selectedProviderId = null; // 账号页左栏当前选中项(重渲染后尽量保持)
+let currentSync = {}; // GetConfig 下发的同步配置(密文字段为掩码)
+let syncMode = ""; // 当前同步模式:"" | "publish" | "subscribe"
+let syncFieldInputs = []; // 同步区块全部输入(含另一模式的隐藏字段):[{key, input, secret}]
 
 // === 视图切换(统一入口,负责窗口尺寸与屏幕内定位) ===
 function setView(view) {
@@ -34,7 +38,9 @@ function setView(view) {
     }
 
     if (view === "ball") {
-        window.go.main.App.CollapseWindow();
+        // 一次 IPC 同时更新球尺寸与恢复位置:展开期间数据变化导致的尺寸
+        // 调整由 CollapseWindow(size) 内完成,避免两次 IPC 并发竞态
+        window.go.main.App.CollapseWindow(pendingBallSize || 60);
     } else if (view === "settings") {
         const [w, h] = SIZES.settings;
         window.go.main.App.ExpandWindow(w, h);
@@ -244,11 +250,13 @@ function getStatusColor(r) {
 }
 
 // 球面格子 = 每个 key 一个格子(颜色=状态);悬停 tooltip 显示各 key 明细。
-// 网格规则:1-3 单行 60×60;4 个 2×2;≥5 按 ceil(sqrt(n)) 方形扩展(边长 = max(60, cols*22))。
+// 网格规则见 settings-helpers.js ballGridFor。
+// 注意:数据可能在面板/设置展开期间到来(自动刷新/订阅更新),此时调整窗口
+// 尺寸会破坏展开态,先记入 pendingBallSize,收起时经 CollapseWindow(size) 生效——
+// 否则收起后仍是旧尺寸。
 function updateBall(results) {
     const ball = document.getElementById("ball");
     ball.querySelectorAll(".ball-cell").forEach((c) => c.remove());
-
     results.forEach((r) => {
         const cell = document.createElement("span");
         cell.className = "ball-cell " + getStatusColor(r);
@@ -263,14 +271,8 @@ function updateBall(results) {
     });
 
     const n = results.length;
-    let cols = n, size = 60;
-    if (n > 4) {
-        cols = Math.ceil(Math.sqrt(n));
-        size = Math.max(60, cols * 22);
-    } else if (n === 4) {
-        cols = 2;
-    }
-    const rows = Math.ceil(n / cols);
+    const { cols, rows, size } = ballGridFor(n);
+    pendingBallSize = size;
     const grid = n > 3;
     ball.classList.toggle("grid", grid);
     ball.classList.toggle("single-cell", n === 1);
@@ -289,7 +291,7 @@ function updateBall(results) {
         .map((r) => r.platform + (r.key_name || (r.key_index > 0 ? " Key " + (r.key_index + 1) : "")) + ": " + (r.error || r.remaining || "未知"))
         .join("\n");
 
-    // 仅在收起态调整窗口尺寸,避免覆盖展开面板
+    // 仅在收起态调整窗口尺寸,避免覆盖展开面板(展开期间只记 pendingBallSize)
     if (currentView === "ball") {
         window.go.main.App.SetBallSize(size);
     }
@@ -346,9 +348,106 @@ document.getElementById("input-opacity").addEventListener("change", async (e) =>
     }
 });
 
+// === 状态同步(多机共享,见 oss-state-sync.md) ===
+// 发布端:状态加密上传 OSS;订阅端:公网下载解密展示,本机不抓取。
+
+// 按模式渲染同步字段;另一模式的字段以隐藏 input 承载当前值,
+// 保存时原样提交,避免切换模式丢失另一套配置。
+function renderSyncFields(mode) {
+    syncMode = mode;
+    const wrap = document.getElementById("sync-fields");
+    wrap.innerHTML = "";
+    syncFieldInputs = [];
+
+    const visible = syncFieldsForMode(mode);
+    const visibleKeys = new Set(visible.map((f) => f.key));
+    const otherKeys = ["publish", "subscribe"]
+        .filter((m) => m !== mode)
+        .flatMap((m) => syncFieldsForMode(m))
+        .filter((f) => !visibleKeys.has(f.key));
+    // 去重(password 同时属于两种模式)
+    const seenHidden = new Set();
+    otherKeys.forEach((f) => {
+        if (seenHidden.has(f.key)) return;
+        seenHidden.add(f.key);
+        const input = document.createElement("input");
+        input.type = "hidden";
+        input.value = currentSync[f.key] || "";
+        wrap.appendChild(input);
+        syncFieldInputs.push({ key: f.key, input, secret: !!f.secret });
+    });
+
+    visible.forEach((f) => {
+        const fg = document.createElement("div");
+        fg.className = "form-group";
+        const label = document.createElement("label");
+        label.textContent = f.label;
+        const input = document.createElement("input");
+        input.type = f.type;
+        if (f.secret) {
+            // 密文字段:掩码放 placeholder,未修改时提交掩码由后端还原
+            input.placeholder = currentSync[f.key] || f.placeholder || "";
+        } else {
+            input.value = currentSync[f.key] || "";
+            input.placeholder = f.placeholder || "";
+        }
+        fg.append(label, input);
+        wrap.appendChild(fg);
+        syncFieldInputs.push({ key: f.key, input, secret: !!f.secret });
+    });
+
+    document.getElementById("sync-actions").hidden = !mode;
+    // 订阅模式完全禁用本地抓取,刷新间隔无意义
+    document.getElementById("input-interval").disabled = mode === "subscribe";
+}
+
+function renderSyncSection() {
+    const mode = currentSync.mode || "";
+    document.getElementById("select-sync-mode").value = mode;
+    renderSyncFields(mode);
+}
+
+document.getElementById("select-sync-mode").addEventListener("change", (e) => {
+    renderSyncFields(e.target.value);
+});
+
+// 收集同步配置:密文字段为空时提交 placeholder(掩码)供后端还原
+function collectSyncConfig() {
+    const out = { mode: syncMode, password: "", oss_endpoint: "", oss_bucket: "", oss_key: "", oss_access_id: "", oss_access_secret: "", url: "" };
+    syncFieldInputs.forEach((f) => {
+        out[f.key] = f.secret ? (f.input.value || f.input.placeholder || "") : f.input.value;
+    });
+    return out;
+}
+
+document.getElementById("btn-test-sync").addEventListener("click", async () => {
+    const status = document.getElementById("sync-status");
+    try {
+        // 先保存当前输入,再用已存配置测试
+        await window.go.main.App.SaveSyncConfig(collectSyncConfig());
+        status.textContent = "测试中...";
+        const result = await window.go.main.App.TestSync();
+        status.textContent = result;
+        toast(result, result.startsWith("成功") ? "success" : "error");
+    } catch (err) {
+        console.error("testSync error:", err);
+        status.textContent = "";
+        toast("测试同步失败: " + err, "error");
+    }
+});
+
+// 最近一次上传/下载结果(发布端每次刷新后、订阅端每次更新后由后端推送)
+window.runtime.EventsOn("sync:status", (msg) => {
+    document.getElementById("sync-status").textContent = msg;
+});
+
 async function loadConfig() {
     try {
         const cfg = await window.go.main.App.GetConfig();
+        currentSync = cfg.sync || {};
+        // 先渲染同步区块(更新 syncMode),再渲染凭证页——凭证组的"同步到 OSS"
+        // 开关依赖 syncMode 判定是否显示
+        renderSyncSection();
         renderProviderList(cfg.providers || []);
         document.getElementById("input-interval").value = cfg.refresh_interval_min || 15;
         // 透明度:同步滑块显示(窗口 alpha 已由 Go OnStartup 应用)
@@ -380,7 +479,12 @@ function collectProviders() {
         const keyNames = groups.map((g) => (g.nameInput ? g.nameInput.value.trim() : ""));
         // 每个凭证组的预算与 keys 对齐(0 = 未设);旧渠道级单一预算已废弃
         const budgets = groups.map((g) => (g.budget ? parseFloat(g.budget.value) || 0 : 0));
-        return { id: c.id, enabled: c.enabled.checked, keys, keyNames, budgets };
+        const provider = { id: c.id, enabled: c.enabled.checked, keys, keyNames, budgets };
+        // 同步排除开关仅发布模式渲染;未渲染时省略该字段,后端保留已存值不被清空
+        if (groups.some((g) => g.syncExclude)) {
+            provider.sync_excludes = groups.map((g) => (g.syncExclude ? !g.syncExclude.checked : false));
+        }
+        return provider;
     });
 }
 
@@ -441,8 +545,9 @@ function renderProviderList(providers) {
         // 凭证页:已有 keys 逐组渲染,否则默认一组空表单
         const savedKeys = (p.keys && p.keys.length) ? p.keys : [{}];
         const budgets = p.budgets || [];
+        const syncExcludes = p.sync_excludes || [];
         savedKeys.forEach((k, i) => {
-            cardObj.groups.push(renderCredGroup(cardObj, k, (p.key_names || [])[i] || "", budgets[i] || 0));
+            cardObj.groups.push(renderCredGroup(cardObj, k, (p.key_names || [])[i] || "", budgets[i] || 0, syncExcludes[i] || false));
         });
         refreshCredTabs(cardObj);
 
@@ -501,8 +606,9 @@ function selectProvider(id) {
 // 渲染一组凭证页(按注册表元数据生成,placeholder 显示掩码值);
 // 组首为可选的显示名输入(实时同步凭证标签文案,详情页用其代替 "Key N");
 // 组尾带"删除此凭证"按钮(组数 >1 时显示)。
-// 返回组对象 {fields:[{key,input}], nameInput, budget(input|null), page}。
-function renderCredGroup(cardObj, creds, name, budget) {
+// 发布模式下每组带"同步到 OSS"开关(syncExcluded = 已存排除标记,默认勾选 = 同步)。
+// 返回组对象 {fields:[{key,input}], nameInput, budget(input|null), syncExclude(checkbox|null), page}。
+function renderCredGroup(cardObj, creds, name, budget, syncExcluded) {
     const p = cardObj.def;
     const page = document.createElement("div");
     page.className = "provider-group cred-page";
@@ -589,7 +695,21 @@ function renderCredGroup(cardObj, creds, name, budget) {
         page.appendChild(budgetGroup);
     }
 
-    const g = { fields, nameInput, budget: budgetInput, page };
+    // 凭证粒度同步开关(仅发布模式显示;勾选 = 该组状态同步到 OSS)
+    let syncExcludeInput = null;
+    if (syncMode === "publish") {
+        const row = document.createElement("label");
+        row.className = "sync-include-row";
+        syncExcludeInput = document.createElement("input");
+        syncExcludeInput.type = "checkbox";
+        syncExcludeInput.checked = !syncExcluded;
+        const text = document.createElement("span");
+        text.textContent = "同步到 OSS(取消勾选则该凭证组仅本机可见)";
+        row.append(syncExcludeInput, text);
+        page.appendChild(row);
+    }
+
+    const g = { fields, nameInput, budget: budgetInput, syncExclude: syncExcludeInput, page };
     const del = document.createElement("button");
     del.className = "btn-sm del-cred";
     del.textContent = "删除此凭证";
@@ -653,7 +773,7 @@ function refreshCredTabs(cardObj) {
     add.textContent = "+";
     add.title = "添加凭证";
     add.addEventListener("click", () => {
-        cardObj.groups.push(renderCredGroup(cardObj, {}, "", 0));
+        cardObj.groups.push(renderCredGroup(cardObj, {}, "", 0, false));
         refreshCredTabs(cardObj);
         setActiveCred(cardObj, cardObj.groups.length - 1); // 切到新页
         updateProviderBadge(cardObj);
@@ -666,6 +786,7 @@ document.getElementById("btn-save-config").addEventListener("click", async () =>
     const providers = collectProviders();
     const interval = parseInt(document.getElementById("input-interval").value) || 15;
     try {
+        await window.go.main.App.SaveSyncConfig(collectSyncConfig());
         await window.go.main.App.SaveConfig(providers, interval);
         // 清空输入框(已保存)
         providerCards.forEach((c) => c.groups.forEach((g) => g.fields.forEach((f) => {
@@ -743,4 +864,13 @@ window.runtime.EventsOn("tray:refresh", () => {
 window.runtime.EventsOn("ui:show-settings", () => {
     setView("settings");
     loadConfig();
+});
+
+// === 版本号与自动升级提示 ===
+window.go.main.App.GetVersion().then((v) => {
+    document.getElementById("app-version").textContent = "v" + v;
+}).catch(() => {});
+
+window.runtime.EventsOn("update:applying", (version) => {
+    toast("正在升级到 v" + version + ",应用将自动重启…", "success");
 });

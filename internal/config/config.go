@@ -13,6 +13,27 @@ type Config struct {
 	BallX              int              `json:"ball_x"`
 	BallY              int              `json:"ball_y"`
 	Opacity            float64          `json:"opacity"` // 界面透明度 0.2-1.0,1.0 = 不透明
+	Sync               SyncConfig       `json:"sync,omitempty"`
+}
+
+// SyncMode 同步模式常量(见 .trae/documents/oss-state-sync.md)。
+const (
+	SyncModeOff       = ""          // 关闭(默认)
+	SyncModePublish   = "publish"   // 发布端:加密上传到 OSS
+	SyncModeSubscribe = "subscribe" // 订阅端:公网下载解密展示
+)
+
+// SyncConfig 是多机状态同步配置。密码与 AccessKey 与现有凭证一致明文存储,
+// 下发前端时掩码(app.go maskSecret)。
+type SyncConfig struct {
+	Mode            string `json:"mode"` // "" | "publish" | "subscribe"
+	Password        string `json:"password,omitempty"`          // 加密密码(SHA-256 派生 AES-256 密钥)
+	OSSEndpoint     string `json:"oss_endpoint,omitempty"`      // 发布端:OSS Endpoint
+	OSSBucket       string `json:"oss_bucket,omitempty"`        // 发布端:Bucket 名
+	OSSKey          string `json:"oss_key,omitempty"`           // 发布端:对象路径(固定,覆盖写)
+	OSSAccessID     string `json:"oss_access_id,omitempty"`     // 发布端:AccessKey ID
+	OSSAccessSecret string `json:"oss_access_secret,omitempty"` // 发布端:AccessKey Secret
+	URL             string `json:"url,omitempty"`               // 订阅端:状态文件公网地址
 }
 
 // ProviderConfig 描述单个 Provider 的启用状态与凭证。
@@ -25,6 +46,7 @@ type ProviderConfig struct {
 	Budget       float64             `json:"budget,omitempty"`        // 旧版渠道级预算(已废弃;Load 时迁移到 Budgets)
 	Budgets      []float64           `json:"budgets,omitempty"`       // 各凭证组的预算(与 Keys 对齐;0 = 该组未设)
 	LastBalances []float64           `json:"last_balances,omitempty"` // 各凭证组上次抓取到的余额(充值检测基线)
+	SyncExcludes []bool              `json:"sync_excludes,omitempty"` // 各凭证组是否排除同步(与 Keys 对齐;"排除"语义使零值 = 同步,旧配置默认全量同步)
 }
 
 // CredKeys 返回凭证组列表:优先 Keys;否则旧 Creds 视为单组;均空返回 nil。
@@ -189,6 +211,19 @@ func AlignBudgets(b []float64, n int) []float64 {
 	out := make([]float64, n)
 	for i := 0; i < n && i < len(b); i++ {
 		out[i] = b[i]
+	}
+	return out
+}
+
+// AlignSyncExcludes 把同步排除切片对齐到 n 个凭证组:
+// 返回长度 = n,不足补 false(该组同步),超出截断;n ≤ 0 时返回 nil。
+func AlignSyncExcludes(in []bool, n int) []bool {
+	if n <= 0 {
+		return nil
+	}
+	out := make([]bool, n)
+	for i := 0; i < n && i < len(in); i++ {
+		out[i] = in[i]
 	}
 	return out
 }

@@ -249,6 +249,79 @@ func TestLoad_MigrateLegacyEmpty_ReturnsDefaults(t *testing.T) {
 	}
 }
 
+// SyncConfig 保存/加载往返:发布端全字段、订阅端字段、排除开关均不丢失。
+func TestSyncConfig_RoundTrip(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("APPDATA", tmpDir)
+
+	original := &Config{
+		Providers: []ProviderConfig{
+			{ID: "kimi", Enabled: true, Keys: []map[string]string{
+				{"api_key": "k1"}, {"api_key": "k2"},
+			}, SyncExcludes: []bool{false, true}},
+		},
+		RefreshIntervalMin: 15,
+		Opacity:            1.0,
+		Sync: SyncConfig{
+			Mode:            SyncModePublish,
+			Password:        "pw123",
+			OSSEndpoint:     "https://oss-cn-hangzhou.aliyuncs.com",
+			OSSBucket:       "my-bucket",
+			OSSKey:          "quota/state.enc",
+			OSSAccessID:     "akid",
+			OSSAccessSecret: "aksecret",
+		},
+	}
+	if err := Save(original); err != nil {
+		t.Fatalf("Save() error: %v", err)
+	}
+
+	loaded, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	if loaded.Sync != original.Sync {
+		t.Errorf("Sync mismatch: got %+v, want %+v", loaded.Sync, original.Sync)
+	}
+	got := loaded.Providers[0].SyncExcludes
+	if len(got) != 2 || got[0] != false || got[1] != true {
+		t.Errorf("SyncExcludes mismatch: got %v", got)
+	}
+}
+
+// 旧配置文件无 sync / sync_excludes 字段 → 零值(模式关闭、全部组同步)。
+func TestLoad_NoSyncFields_Defaults(t *testing.T) {
+	writeConfig(t, `{"providers": [{"id": "kimi", "enabled": true, "keys": [{"api_key": "k1"}]}]}`)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	if cfg.Sync.Mode != SyncModeOff {
+		t.Errorf("Sync.Mode = %q, 应为空(关闭)", cfg.Sync.Mode)
+	}
+	if len(cfg.Providers[0].SyncExcludes) != 0 {
+		t.Errorf("SyncExcludes 应为空, got %v", cfg.Providers[0].SyncExcludes)
+	}
+}
+
+// AlignSyncExcludes 对齐:截断 / 补 false / n ≤ 0 返回 nil。
+func TestAlignSyncExcludes(t *testing.T) {
+	got := AlignSyncExcludes([]bool{true, false, true}, 2)
+	if len(got) != 2 || got[0] != true || got[1] != false {
+		t.Errorf("截断错误: %v", got)
+	}
+
+	got = AlignSyncExcludes([]bool{true}, 3)
+	if len(got) != 3 || got[0] != true || got[1] != false || got[2] != false {
+		t.Errorf("补齐错误: %v", got)
+	}
+
+	if got := AlignSyncExcludes([]bool{true}, 0); got != nil {
+		t.Errorf("n=0 应为 nil, got %v", got)
+	}
+}
+
 // CredKeys 兼容性:Keys 优先;无 Keys 时 Creds 视为单组;均空返回 nil。
 func TestCredKeys_Compat(t *testing.T) {
 	// Keys 有值 → 返回 Keys

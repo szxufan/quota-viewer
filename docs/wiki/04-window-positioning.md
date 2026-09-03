@@ -54,7 +54,8 @@ workAreaForPoint(px, py) → (x, y, w, h, dpi, ok)   [workarea_windows.go:106]
 
 - 球窗口尺寸不再固定：前端渲染完球网格后调用 `App.SetBallSize(size)`（[app.go]），后端更新包级 `ballSize`、`WindowSetMinSize` + `WindowSetSize`，再 `fitToScreen` 校正位置
 - `WM_GETMINMAXINFO` 子类回调读取同一包级 `ballSize`，最小拖动尺寸始终跟随球尺寸
-- 网格规则（前端 main.js updateBall）：1-3 单行 60×60；4 个 2×2；≥5 按 `ceil(sqrt(n))` 方形扩展，边长 = `max(60, cols*22)`
+- 网格规则（纯函数 `ballGridFor`，settings-helpers.js）：1-3 单行 60×60；4 个 2×2；≥5 按 `ceil(sqrt(n))` 方形扩展，边长 = `max(60, cols*22)`
+- **尺寸时机**：数据可能在面板/设置展开期间到来（自动刷新/订阅更新），此时 `SetBallSize` 会破坏展开态——前端只在收起态调用它，展开期间记入 `pendingBallSize`，`setView("ball")` 收起时经 `syncBallSizeOnCollapse` 补调。遗漏该补调会导致"收起后球尺寸与数据不符"（2026-09-03 修复）
 - 展开面板高度由前端按内容自适应：`resizePanel()` 读 DOM `offsetHeight` 后调 `ExpandWindow(340, h)`
 
 ### 已知坑

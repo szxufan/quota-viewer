@@ -30,6 +30,9 @@ Unicode true
 ####
 ## !define REQUEST_EXECUTION_LEVEL "admin"            # Default "admin"  see also https://nsis.sourceforge.io/Docs/Chapter4.html
 ####
+## 每用户安装:无 UAC,支持 /S 静默覆盖升级(自动更新依赖此模式)
+!define REQUEST_EXECUTION_LEVEL "user"
+####
 ## Include the wails tools
 ####
 !include "wails_tools.nsh"
@@ -72,17 +75,37 @@ ManifestDPIAware true
 
 Name "${INFO_PRODUCTNAME}"
 OutFile "..\..\bin\${INFO_PROJECTNAME}-${ARCH}-installer.exe" # Name of the installer's file.
-InstallDir "$PROGRAMFILES64\${INFO_COMPANYNAME}\${INFO_PRODUCTNAME}" # Default installing folder ($PROGRAMFILES is Program Files folder).
+InstallDir "$LOCALAPPDATA\${INFO_PRODUCTNAME}" # 每用户安装目录(免 UAC,自动更新可静默覆盖)
 ShowInstDetails show # This will always show the installation details.
 
 Function .onInit
    !insertmacro wails.checkArchitecture
 FunctionEnd
 
+# 等待旧进程退出后删除旧 exe(升级时应用已自行退出,此处兜底等待至多 10 秒)
+Function waitAndKillOldExe
+    Var /GLOBAL retryCount
+    StrCpy $retryCount 0
+waitLoop:
+    ClearErrors
+    Delete "$INSTDIR\${PRODUCT_EXECUTABLE}"
+    IfErrors 0 waitDone
+    IntOp $retryCount $retryCount + 1
+    IntCmp $retryCount 20 waitFailed 0 waitFailed
+    Sleep 500
+    Goto waitLoop
+waitFailed:
+    Abort "无法替换旧版本文件(应用仍在运行?),请关闭应用后重试。"
+waitDone:
+    ; 文件已删除(或本就不存在),继续安装
+FunctionEnd
+
 Section
     !insertmacro wails.setShellContext
 
     !insertmacro wails.webview2runtime
+
+    Call waitAndKillOldExe
 
     SetOutPath $INSTDIR
 
@@ -95,6 +118,10 @@ Section
     !insertmacro wails.associateCustomProtocols
 
     !insertmacro wails.writeUninstaller
+
+    # 静默模式(自动升级)下安装完成后自动重启应用
+    IfSilent 0 +2
+        Exec "$INSTDIR\${PRODUCT_EXECUTABLE}"
 SectionEnd
 
 Section "uninstall"

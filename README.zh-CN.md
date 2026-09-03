@@ -49,6 +49,10 @@ wails build
 
 产物: `build/bin/quota-viewer.exe`
 
+## 自动升级与发布
+
+应用会自动检查更新（启动 30 秒后首次，之后每 6 小时），并通过托管在阿里云 OSS 的 NSIS 安装包静默自升级。发布流程见 [`docs/AUTO_UPDATE.md`](docs/AUTO_UPDATE.md)（配置 `release.env` 后 `go run ./cmd/release` 一键发布）。
+
 ## 项目结构
 
 ```

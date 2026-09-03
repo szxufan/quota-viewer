@@ -41,6 +41,7 @@
         </div>
         <div class="settings-tabs">
             <button class="settings-tab active" data-tab="accounts">账号</button>
+            <button class="settings-tab" data-tab="sync">同步</button>
             <button class="settings-tab" data-tab="general">通用</button>
         </div>
         <div class="settings-body">
@@ -48,6 +49,23 @@
                 <div class="accounts-layout">
                     <div id="provider-nav" class="provider-nav"><!-- 左栏导航项由 JS 动态生成 --></div>
                     <div id="provider-detail" class="provider-detail"><!-- 右栏详情面板由 JS 动态生成 --></div>
+                </div>
+            </div>
+            <div id="tab-sync" class="settings-tab-pane">
+                <div class="form-group">
+                    <label for="select-sync-mode">状态同步(多机共享)</label>
+                    <select id="select-sync-mode">
+                        <option value="">关闭</option>
+                        <option value="publish">发布到 OSS(本机作为数据源)</option>
+                        <option value="subscribe">订阅远端状态(本机不抓取)</option>
+                    </select>
+                </div>
+                <div id="sync-fields"><!-- 按模式由 JS 动态生成 --></div>
+                <div class="form-group" id="sync-actions" hidden>
+                    <div class="sync-actions-row">
+                        <button id="btn-test-sync" class="btn-sm">测试同步</button>
+                        <span id="sync-status" class="muted"></span>
+                    </div>
                 </div>
             </div>
             <div id="tab-general" class="settings-tab-pane">
@@ -65,6 +83,7 @@
             </div>
         </div>
         <div class="settings-footer">
+            <span id="app-version" class="app-version"></span>
             <button id="btn-save-config" class="btn-primary">保存</button>
         </div>
     </div>

@@ -373,8 +373,19 @@ html, body {
 /* 保存按钮固定底栏,不随内容滚动 */
 .settings-footer {
     flex: none;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
     padding: 10px 14px;
     border-top: 1px solid var(--hairline);
+}
+
+/* 设置面板页脚的版本号展示 */
+.app-version {
+    font-size: 11px;
+    color: var(--text-3);
+    user-select: text;
 }
 
 .form-group { margin-bottom: 14px; }
@@ -402,6 +413,44 @@ html, body {
 }
 .form-group textarea { resize: none; }
 .input-narrow { width: 90px !important; }
+
+/* === 状态同步(多机共享) === */
+.form-group select {
+    width: 100%;
+    padding: 7px 9px;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: var(--radius-ctrl);
+    color: var(--text-1);
+    font-size: 12px;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.form-group select:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-ring);
+}
+/* 原生下拉弹层在 Windows/WebView2 下用系统白底,需显式深色背景避免白底白字 */
+.form-group select option {
+    background: #1c2030;
+    color: var(--text-1);
+}
+.sync-actions-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+/* 凭证组内的"同步到 OSS"开关 */
+.sync-include-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--text-2);
+    margin-bottom: 14px;
+    user-select: none;
+}
+.sync-include-row input { width: auto !important; }
 
 /* === 透明度滑块 === */
 .opacity-row {

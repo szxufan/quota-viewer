@@ -33,3 +33,41 @@ export function parseOptionValues(value, options) {
         .map((o) => o.value)
         .filter((v, i, arr) => selected.has(v) && arr.indexOf(v) === i);
 }
+
+// 状态同步各模式需展示的字段清单(多机状态同步,见 oss-state-sync.md)。
+// secret: true 的字段后端下发为掩码,显示在 placeholder;提交掩码由后端还原旧值。
+// placeholder 为非密文字段的输入提示。
+export function syncFieldsForMode(mode) {
+    const password = { key: "password", label: "加密密码", type: "password", secret: true, placeholder: "两端密码必须一致" };
+    if (mode === "publish") {
+        return [
+            { key: "oss_endpoint", label: "OSS Endpoint", type: "text", secret: false, placeholder: "https://oss-cn-hangzhou.aliyuncs.com" },
+            { key: "oss_bucket", label: "OSS Bucket", type: "text", secret: false, placeholder: "需开启公共读" },
+            { key: "oss_key", label: "对象路径", type: "text", secret: false, placeholder: "如 quota/state.enc" },
+            { key: "oss_access_id", label: "AccessKey ID", type: "text", secret: false, placeholder: "" },
+            { key: "oss_access_secret", label: "AccessKey Secret", type: "password", secret: true, placeholder: "" },
+            password,
+        ];
+    }
+    if (mode === "subscribe") {
+        return [
+            { key: "url", label: "状态文件地址", type: "text", secret: false, placeholder: "https://<bucket>.oss-<region>.aliyuncs.com/<对象路径>" },
+            password,
+        ];
+    }
+    return [];
+}
+
+// 悬浮球网格布局:返回 {cols, rows, size}。
+// 规则:1-3 单行 60×60;4 个 2×2;≥5 按 ceil(sqrt(n)) 方形扩展,边长 = max(60, cols*22)。
+// 纯函数,供 main.js updateBall 与收起时判断尺寸是否需要补调(SetBallSize)复用。
+export function ballGridFor(n) {
+    let cols = n, size = 60;
+    if (n > 4) {
+        cols = Math.ceil(Math.sqrt(n));
+        size = Math.max(60, cols * 22);
+    } else if (n === 4) {
+        cols = 2;
+    }
+    return { cols, rows: Math.ceil(n / Math.max(cols, 1)), size };
+}

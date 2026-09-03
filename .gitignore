@@ -6,3 +6,6 @@ quota-viewer.exe
 
 # 依赖
 node_modules
+
+# 发布凭证(真实凭证不入库,模板 release.env.example 保留)
+release.env

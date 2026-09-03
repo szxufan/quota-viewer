@@ -2,6 +2,13 @@
   "$schema": "https://wails.io/schemas/config.v2.json",
   "name": "quota-viewer",
   "outputfilename": "quota-viewer",
+  "info": {
+    "companyName": "joeatgp",
+    "productName": "Quota Viewer",
+    "productVersion": "1.0.0",
+    "copyright": "Copyright © 2026 joeatgp",
+    "comments": "AI 平台配额悬浮球监控"
+  },
   "frontend:install": "npm install",
   "frontend:build": "npm run build",
   "frontend:dev:watcher": "npm run dev",

@@ -10,6 +10,7 @@ import (
 	"quota-viewer/internal/config"
 	"quota-viewer/internal/fetcher"
 	"quota-viewer/internal/tray"
+	"quota-viewer/internal/updater"
 	"sync/atomic"
 
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
@@ -22,6 +23,7 @@ type App struct {
 	cache   []fetcher.QuotaResult
 	tray    *tray.TrayHandler
 	visible atomic.Bool
+	stopAuto chan struct{} // 当前自动刷新 goroutine 的停止信号(startAutoRefresh 重启时关闭旧的)
 
 	// 展开/收起窗口状态:savedX/savedY 记录展开前悬浮球位置
 	expanded bool
@@ -89,8 +91,18 @@ func (a *App) OnStartup(ctx context.Context) {
 		wailsruntime.EventsEmit(ctx, "ui:show-settings")
 	})
 
-	// 启动后台定时刷新
-	go a.startAutoRefresh()
+	// 启动后台自动刷新(startAutoRefresh 内部自起 goroutine)
+	a.startAutoRefresh()
+
+	// 启动自动升级检查(dev 构建或未配置清单时内部直接跳过)
+	go updater.StartAuto(ctx, Version, func(version string) {
+		wailsruntime.EventsEmit(ctx, "update:applying", version)
+	})
+}
+
+// GetVersion 返回应用版本号(发布构建经 ldflags 注入,dev 构建为 "dev")。
+func (a *App) GetVersion() string {
+	return Version
 }
 
 // OnShutdown 在应用退出时清理托盘图标。
@@ -100,8 +112,22 @@ func (a *App) OnShutdown(ctx context.Context) {
 	}
 }
 
-// Refresh 并发调用三个 fetcher,返回结果并推送事件到前端。
+// Refresh 抓取并推送事件到前端。
+// 订阅模式:不抓取本地,下载远端加密状态直接展示;
+// 发布模式:本地抓取后异步加密上传 OSS(不阻塞返回)。
 func (a *App) Refresh() []fetcher.QuotaResult {
+	a.mu.Lock()
+	mode := a.cfg.Sync.Mode
+	a.mu.Unlock()
+
+	if mode == config.SyncModeSubscribe {
+		a.fetchRemoteState()
+		a.mu.Lock()
+		results := a.cache
+		a.mu.Unlock()
+		return results
+	}
+
 	results := a.fetchAll()
 	a.mu.Lock()
 	a.cache = results
@@ -110,19 +136,23 @@ func (a *App) Refresh() []fetcher.QuotaResult {
 	// 推送事件到前端
 	wailsruntime.EventsEmit(a.ctx, "quota:update", results)
 
+	if mode == config.SyncModePublish {
+		go a.publishState(results)
+	}
 	return results
 }
 
 // ProviderInput 是前端提交的 Provider 状态。
 // 凭证字段空字符串 = 不修改(避免掩码回写覆盖真实值)。
 type ProviderInput struct {
-	ID       string              `json:"id"`
-	Enabled  bool                `json:"enabled"`
-	Creds    map[string]string   `json:"creds"`    // 旧前端单凭证(兼容;优先使用 Keys)
-	Keys     []map[string]string `json:"keys"`      // 多组凭证(每组一套字段值)
-	KeyNames []string            `json:"keyNames"`  // 各凭证组的显示名(与 Keys 对齐)
-	Budgets  []float64           `json:"budgets"`   // 各凭证组的预算(与 Keys 对齐)
-	Budget   float64             `json:"budget"`    // 旧前端渠道级预算(兼容;忽略,由 Budgets 取代)
+	ID           string              `json:"id"`
+	Enabled      bool                `json:"enabled"`
+	Creds        map[string]string   `json:"creds"`         // 旧前端单凭证(兼容;优先使用 Keys)
+	Keys         []map[string]string `json:"keys"`          // 多组凭证(每组一套字段值)
+	KeyNames     []string            `json:"keyNames"`      // 各凭证组的显示名(与 Keys 对齐)
+	Budgets      []float64           `json:"budgets"`       // 各凭证组的预算(与 Keys 对齐)
+	Budget       float64             `json:"budget"`        // 旧前端渠道级预算(兼容;忽略,由 Budgets 取代)
+	SyncExcludes []bool              `json:"sync_excludes"` // 各凭证组是否排除同步到 OSS(与 Keys 对齐)
 }
 
 // GetConfig 返回当前配置(凭证做掩码)与全部 Provider 元数据。
@@ -181,18 +211,31 @@ func (a *App) GetConfig() map[string]interface{} {
 			fields = append(fields, fm)
 		}
 		providers = append(providers, map[string]interface{}{
-			"id":        def.ID,
-			"name":      def.DisplayName,
-			"abbr":      def.Abbr,
-			"kind":      def.Kind,
-			"enabled":   ok && pc.Enabled,
-			"login_url": def.LoginURL,
-			"fields":    fields,
-			"creds":     keys,
-			"keys":      keys,
-			"key_names": pc.KeyNames,
-			"budgets":   pc.Budgets,
+			"id":            def.ID,
+			"name":          def.DisplayName,
+			"abbr":          def.Abbr,
+			"kind":          def.Kind,
+			"enabled":       ok && pc.Enabled,
+			"login_url":     def.LoginURL,
+			"fields":        fields,
+			"creds":         keys,
+			"keys":          keys,
+			"key_names":     pc.KeyNames,
+			"budgets":       pc.Budgets,
+			"sync_excludes": pc.SyncExcludes,
 		})
+	}
+
+	// 同步配置下发(密码与 AccessKey Secret 掩码)
+	syncMasked := map[string]interface{}{
+		"mode":              a.cfg.Sync.Mode,
+		"password":          maskSecret(a.cfg.Sync.Password),
+		"oss_endpoint":      a.cfg.Sync.OSSEndpoint,
+		"oss_bucket":        a.cfg.Sync.OSSBucket,
+		"oss_key":           a.cfg.Sync.OSSKey,
+		"oss_access_id":     a.cfg.Sync.OSSAccessID,
+		"oss_access_secret": maskSecret(a.cfg.Sync.OSSAccessSecret),
+		"url":               a.cfg.Sync.URL,
 	}
 
 	return map[string]interface{}{
@@ -201,6 +244,7 @@ func (a *App) GetConfig() map[string]interface{} {
 		"ball_x":               a.cfg.BallX,
 		"ball_y":               a.cfg.BallY,
 		"opacity":              a.cfg.Opacity,
+		"sync":                 syncMasked,
 	}
 }
 
@@ -291,6 +335,11 @@ func (a *App) SaveConfig(providers []ProviderInput, refreshMin int) error {
 		// 各凭证组的预算与 Keys 对齐(0 = 该组未设);旧渠道级预算字段废弃
 		pc.Budgets = config.AlignBudgets(in.Budgets, len(pc.Keys))
 		pc.Budget = 0
+		// 各凭证组的同步排除开关与 Keys 对齐(false = 同步);
+		// 前端仅在发布模式渲染该开关,未提交(nil)时保留已存值
+		if in.SyncExcludes != nil {
+			pc.SyncExcludes = config.AlignSyncExcludes(in.SyncExcludes, len(pc.Keys))
+		}
 		// 凭证组数变化后旧余额基线不再对齐,重置待下次抓取重建
 		if len(pc.Keys) != len(pc.LastBalances) {
 			pc.LastBalances = nil
@@ -467,8 +516,9 @@ func (a *App) SetBallSize(size int) {
 const ballSizeMin = 60
 
 // ExpandWindow 调整窗口尺寸并重新定位,保证面板完整落在当前屏幕内:
-// 默认从球的位置向右下展开,放不下则翻转到左上,高度钳制在工作区内(防止超屏截断),
-// 最后整体钳制在屏幕内。首次展开时记录悬浮球位置,供 CollapseWindow 精确恢复。
+// 默认从球的位置向右下展开,放不下则翻转到左上;宽/高均钳制在工作区内
+// (高度超出由前端内容区滚动,宽度超出防止窗口远超屏宽)。
+// 首次展开时记录悬浮球位置,供 CollapseWindow 精确恢复。
 func (a *App) ExpandWindow(w, h int) {
 	a.mu.Lock()
 	if !a.expanded {
@@ -478,9 +528,14 @@ func (a *App) ExpandWindow(w, h int) {
 	x, y := a.savedX, a.savedY
 	a.mu.Unlock()
 
-	// 高度钳制到球所在屏幕工作区内(含边距),超出部分由前端内容区滚动
-	if _, _, _, wh, dpi, ok := workAreaForPoint(x, y); ok && dpi > 0 {
+	// 尺寸钳制到球所在屏幕工作区内(含边距):高度超出由前端内容区滚动;
+	// 宽度超出(单渠道凭证很多时前端会请求超宽面板)则收缩,避免窗口远超屏宽
+	if _, _, ww, wh, dpi, ok := workAreaForPoint(x, y); ok && dpi > 0 {
+		maxW := (ww - 2*screenMargin*dpi/96) * 96 / dpi
 		maxH := (wh - 2*screenMargin*dpi/96) * 96 / dpi
+		if w > maxW {
+			w = maxW
+		}
 		if h > maxH {
 			h = maxH
 		}
@@ -494,12 +549,22 @@ func (a *App) ExpandWindow(w, h int) {
 }
 
 // CollapseWindow 收起为悬浮球,并恢复到展开前的位置。
-func (a *App) CollapseWindow() {
+// size 为前端按数据量算出的球窗口边长:展开期间数据可能变化,收起时一次调用
+// 内同步更新 ballSize 与窗口尺寸,避免前端两次 IPC(SetBallSize + CollapseWindow)
+// 在 Go 侧并发执行导致尺寸/位置互相覆盖。
+func (a *App) CollapseWindow(size int) {
+	if size < ballSizeMin {
+		size = ballSizeMin
+	}
 	a.mu.Lock()
 	a.expanded = false
 	x, y := a.savedX, a.savedY
 	a.mu.Unlock()
 
+	if size != ballSize {
+		ballSize = size
+		wailsruntime.WindowSetMinSize(a.ctx, ballSize, ballSize)
+	}
 	// 将绝对坐标转为显示器相对坐标,避免 WindowSetPosition 叠加工作区原点
 	if nx, ny, ok := fitToScreen(a.ctx, x, y, ballSize, ballSize); ok {
 		x, y = nx, ny
@@ -763,19 +828,42 @@ func (a *App) persistCredUpdates(updates []credUpdate) {
 	}
 }
 
-// startAutoRefresh 定时后台刷新。
+// startAutoRefresh 后台自动刷新(可通过再次调用重启,保存配置后模式/间隔立即生效)。
+// 订阅模式:立即拉取远端状态,之后按载荷预计下次刷新时间 +60 秒动态休眠;
+// 其它模式:按刷新间隔周期抓取,间隔每轮重读配置。
 func (a *App) startAutoRefresh() {
-	for {
-		interval := 15
-		a.mu.Lock()
-		if a.cfg.RefreshIntervalMin > 0 {
-			interval = a.cfg.RefreshIntervalMin
-		}
-		a.mu.Unlock()
-
-		time.Sleep(time.Duration(interval) * time.Minute)
-		a.Refresh()
+	a.mu.Lock()
+	if a.stopAuto != nil {
+		close(a.stopAuto) // 停掉旧 goroutine
 	}
+	stop := make(chan struct{})
+	a.stopAuto = stop
+	a.mu.Unlock()
+
+	go func() {
+		for {
+			a.mu.Lock()
+			mode := a.cfg.Sync.Mode
+			interval := a.cfg.RefreshIntervalMin
+			a.mu.Unlock()
+			if interval <= 0 {
+				interval = 15
+			}
+
+			wait := time.Duration(interval) * time.Minute
+			if mode == config.SyncModeSubscribe {
+				wait = a.fetchRemoteState() // 返回值即下次等待时长
+			}
+			select {
+			case <-stop:
+				return
+			case <-time.After(wait):
+			}
+			if mode != config.SyncModeSubscribe {
+				a.Refresh()
+			}
+		}
+	}()
 }
 
 func maskSecret(s string) string {
