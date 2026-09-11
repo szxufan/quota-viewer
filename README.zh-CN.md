@@ -30,6 +30,7 @@
 | OpenCode Go | Workspace ID + Session Token | 滚动窗口额度百分比 |
 | 小米 MiMo | Cookie | 套餐 Token 用量 |
 | DeepSeek | API Key (`sk-...`) | 账户余额（余额型） |
+| 百炼 | 百炼 CLI 登录态（`bl auth login`，无需凭证） | Token Plan 5 小时 / 周窗口用量百分比 |
 
 > 提示：Cookie 类凭证支持在浏览器 F12 → 网络标签 → 复制请求头后，直接粘贴 "Copy as PowerShell" 格式的整段脚本，保存时自动解析为 Cookie 请求头。
 

@@ -14,8 +14,10 @@ export function groupHasData(fields) {
 }
 
 // Provider 摘要行徽标文案:groups 为各凭证组的字段快照数组。
-// 无非空组 → "未配置";否则 "n 个凭证"。
-export function providerBadgeText(groups) {
+// 免凭证 Provider(credentialless,如百炼 CLI 全局登录态)启用即可用 → "免凭证";
+// 其余无非空组 → "未配置";否则 "n 个凭证"。
+export function providerBadgeText(groups, credentialless) {
+    if (credentialless) return "免凭证";
     const n = groups.filter(groupHasData).length;
     return n > 0 ? `${n} 个凭证` : "未配置";
 }

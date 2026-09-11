@@ -211,18 +211,19 @@ func (a *App) GetConfig() map[string]interface{} {
 			fields = append(fields, fm)
 		}
 		providers = append(providers, map[string]interface{}{
-			"id":            def.ID,
-			"name":          def.DisplayName,
-			"abbr":          def.Abbr,
-			"kind":          def.Kind,
-			"enabled":       ok && pc.Enabled,
-			"login_url":     def.LoginURL,
-			"fields":        fields,
-			"creds":         keys,
-			"keys":          keys,
-			"key_names":     pc.KeyNames,
-			"budgets":       pc.Budgets,
-			"sync_excludes": pc.SyncExcludes,
+			"id":             def.ID,
+			"name":           def.DisplayName,
+			"abbr":           def.Abbr,
+			"kind":           def.Kind,
+			"enabled":        ok && pc.Enabled,
+			"login_url":      def.LoginURL,
+			"credentialless": def.Credentialless,
+			"fields":         fields,
+			"creds":          keys,
+			"keys":           keys,
+			"key_names":      pc.KeyNames,
+			"budgets":        pc.Budgets,
+			"sync_excludes":  pc.SyncExcludes,
 		})
 	}
 
@@ -664,7 +665,15 @@ func (a *App) fetchAll() []fetcher.QuotaResult {
 		if !p.Enabled {
 			continue
 		}
-		for i, creds := range p.CredKeys() {
+		credsList := p.CredKeys()
+		// 免凭证 Provider(如百炼 CLI 全局登录态):无凭证组也创建一个空组任务,
+		// 否则启用后被跳过,球格不显示
+		if len(credsList) == 0 {
+			if def, ok := fetcher.Get(p.ID); ok && def.Credentialless {
+				credsList = []map[string]string{{}}
+			}
+		}
+		for i, creds := range credsList {
 			name := ""
 			if i < len(p.KeyNames) {
 				name = p.KeyNames[i]

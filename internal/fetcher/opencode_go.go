@@ -31,8 +31,8 @@ func NewOpenCodeGoFetcher(workspaceID string, sessionToken string) *OpenCodeGoFe
 
 // windowInfo 描述一个配额窗口。
 type windowInfo struct {
-	windowType   string // "rolling", "weekly", "monthly"
-	usagePercent int
+	windowType   string  // "rolling", "weekly", "monthly"
+	usagePercent float64 // 页面已输出小数百分比(如 13.6)
 	resetInSec   int
 }
 
@@ -60,15 +60,62 @@ func windowLabel(wt string) string {
 // 格式: rollingUsage:$R[10]={usagePercent:7,resetInSec:18000}
 var ssrPattern = regexp.MustCompile(`(rolling|weekly|monthly)Usage:\$R\[\d+\]=\{([^}]+)\}`)
 
-// slotPattern 是 data-slot HTML 备选解析模式。
-var slotPattern = regexp.MustCompile(`<div data-slot="usage-item">\s*<span data-slot="usage-label">(Rolling Usage|Weekly Usage|Monthly Usage)</span>\s*<span data-slot="usage-value"><!--\$-->(\d+)<!--/-->%</span>\s*</div>`)
-
 // slotNameMap 将 data-slot label 映射到内部窗口类型。
+// 页面 label 随 oc_locale 变化: 英文 "Rolling Usage"/"Weekly Usage"/"Monthly Usage",
+// 中文 "5 小时用量"/"每周用量"/"每月用量",其他语言回退 aria/进度条结构;
+// 此处收录已确认的中英文本,均按包含关键词匹配(见 slotWindowType)。
 var slotNameMap = map[string]string{
-	"Rolling Usage": "rolling",
-	"Weekly Usage":  "weekly",
-	"Monthly Usage": "monthly",
+	"rolling": "rolling",
+	"weekly":  "weekly",
+	"monthly": "monthly",
+	"小时用量":   "rolling", // "5 小时用量"
+	"每周用量":   "weekly",
+	"每周":     "weekly",
+	"每月用量":   "monthly",
+	"每月":     "monthly",
 }
+
+// slotWindowType 依据 label 文本判断窗口类型(小写化后做关键词匹配)。
+// 匹配顺序: 精确 → 前缀/包含。中文 label 无词边界,必须用包含匹配。
+func slotWindowType(label string) (string, bool) {
+	lower := strings.ToLower(strings.TrimSpace(label))
+	if wt, ok := slotNameMap[lower]; ok {
+		return wt, true
+	}
+	// 中文优先匹配多字关键词,避免 "每周" 误吞 "每小时" 之类(当前页面无此冲突)
+	for _, kw := range []struct{ key, wt string }{
+		{"rolling", "rolling"},
+		{"5 小时", "rolling"},
+		{"5小时", "rolling"},
+		{"weekly", "weekly"},
+		{"每周", "weekly"},
+		{"monthly", "monthly"},
+		{"每月", "monthly"},
+	} {
+		if strings.Contains(lower, kw.key) {
+			return kw.wt, true
+		}
+	}
+	return "", false
+}
+
+// slotItemStartRe 定位新版页面 data-slot="usage-item" 块的起始标签。
+var slotItemStartRe = regexp.MustCompile(`<div[^>]*data-slot="usage-item"`)
+
+// slotLabelRe 在块内匹配 data-slot="usage-label" 的文本(label 中的 HTML 注释先剥离)。
+var slotLabelRe = regexp.MustCompile(`data-slot="usage-label"[^>]*>([^<]+)<`)
+
+// slotValueRe 在块内匹配 data-slot="usage-value" 的百分比
+// (允许 SolidStart 流式注释 <!--$-->…<!--/--> 夹在数字两侧;新版为小数,如 13.6)。
+var slotValueRe = regexp.MustCompile(`data-slot="usage-value"[\s\S]*?<!--\$-->\s*(\d+(?:\.\d+)?)\s*<!--\/-->`)
+
+// slotResetRe 在块内捕获 data-slot="reset-time" 的完整文本内容
+// (新版页面不再内嵌 resetInSec 数字,而是 "Resets in 2 hours 29 minutes" 这类文本;
+// SolidStart 流式注释 <!--$-->/<!--/--> 可能出现在任意位置,捕获后统一剥离)。
+var slotResetRe = regexp.MustCompile(`data-slot="reset-time"[^>]*>([\s\S]*?)</span>`)
+
+// htmlCommentRe 匹配 SolidStart SSR 流式注释。
+var htmlCommentRe = regexp.MustCompile(`<!--[\s\S]*?-->`)
 
 func (f *OpenCodeGoFetcher) Fetch() QuotaResult {
 	result := QuotaResult{
@@ -153,12 +200,12 @@ func (f *OpenCodeGoFetcher) Fetch() QuotaResult {
 		}
 	}
 
-	result.Percent = float64(best.usagePercent)
+	result.Percent = best.usagePercent
 	// 所有解析到的窗口全部展示
 	var lines []string
 	for _, w := range windows {
-		lines = append(lines, fmt.Sprintf("%s · 已用 %d%% · 剩余 %d%%",
-			windowLabel(w.windowType), w.usagePercent, 100-w.usagePercent))
+		lines = append(lines, fmt.Sprintf("%s · 已用 %s%% · 剩余 %s%%",
+			windowLabel(w.windowType), formatPercent(w.usagePercent), formatPercent(100-w.usagePercent)))
 	}
 	result.Remaining = strings.Join(lines, "\n")
 	result.ResetAt = time.Now().Add(time.Duration(best.resetInSec) * time.Second).Format(time.RFC3339)
@@ -192,13 +239,14 @@ func parseSSRWindows(html string) []windowInfo {
 }
 
 // parseSSRFields 解析 SSR 窗口数据内部的 key=value 对。
-// 内部格式: status:"ok",usagePercent:7,resetInSec:18000 (顺序不固定)
+// 内部格式: status:"ok",usagePercent:13.6,resetInSec:3343 (顺序不固定)
+// usagePercent 已为小数;usage/limit 为字节数,忽略。
 // 返回 hasPercent: 是否存在 usagePercent 字段(区分真实 0% 与字段缺失)。
-func parseSSRFields(inner string) (percent int, resetSec int, hasPercent bool) {
+func parseSSRFields(inner string) (percent float64, resetSec int, hasPercent bool) {
 	for _, part := range strings.Split(inner, ",") {
 		part = strings.TrimSpace(part)
 		if strings.HasPrefix(part, "usagePercent:") {
-			percent, _ = strconv.Atoi(strings.TrimPrefix(part, "usagePercent:"))
+			percent, _ = strconv.ParseFloat(strings.TrimPrefix(part, "usagePercent:"), 64)
 			hasPercent = true
 		} else if strings.HasPrefix(part, "resetInSec:") {
 			resetSec, _ = strconv.Atoi(strings.TrimPrefix(part, "resetInSec:"))
@@ -208,27 +256,124 @@ func parseSSRFields(inner string) (percent int, resetSec int, hasPercent bool) {
 }
 
 // parseSlotWindows 从 HTML data-slot 结构中解析配额窗口数据(SSR 解析失败时的备选)。
+// 新版页面每个窗口渲染为 <div data-slot="usage-item"> 块,块内含嵌套 div
+// (usage-header/进度条等),因此按"下一个 usage-item 起始标签"切块再在块内匹配,
+// 而非假设单行紧凑结构。解析不到 resetInSec 时回退为 0(未知)。
 func parseSlotWindows(html string) []windowInfo {
-	matches := slotPattern.FindAllStringSubmatch(html, -1)
-	if len(matches) == 0 {
+	var starts []int
+	for _, loc := range slotItemStartRe.FindAllStringIndex(html, -1) {
+		starts = append(starts, loc[0])
+	}
+	if len(starts) == 0 {
 		return nil
 	}
 
 	var windows []windowInfo
-	for _, m := range matches {
-		label := m[1]
-		percentStr := m[2]
-		percent, _ := strconv.Atoi(percentStr)
-		wt, ok := slotNameMap[label]
+	for i, start := range starts {
+		end := len(html)
+		if i+1 < len(starts) {
+			end = starts[i+1]
+		}
+		block := html[start:end]
+
+		labelMatch := slotLabelRe.FindStringSubmatch(block)
+		valueMatch := slotValueRe.FindStringSubmatch(block)
+		if labelMatch == nil || valueMatch == nil {
+			continue
+		}
+		label := htmlCommentRe.ReplaceAllString(labelMatch[1], "")
+		wt, ok := slotWindowType(label)
 		if !ok {
 			continue
 		}
-		// data-slot 没有 resetInSec, 默认 0 表示未知
+		percent, _ := strconv.ParseFloat(strings.TrimSpace(valueMatch[1]), 64)
 		windows = append(windows, windowInfo{
 			windowType:   wt,
 			usagePercent: percent,
-			resetInSec:   0,
+			resetInSec:   parseSlotResetInSec(block),
 		})
 	}
 	return windows
+}
+
+// formatPercent 格式化百分比: 整数不带小数点,小数保留一位(如 13 → "13", 13.6 → "13.6")。
+func formatPercent(p float64) string {
+	if p == float64(int(p)) {
+		return strconv.Itoa(int(p))
+	}
+	return strconv.FormatFloat(p, 'f', 1, 64)
+}
+
+// parseSlotResetInSec 从块的 reset-time 文本短语解析秒数。
+// 中文(oc_locale=zh): "重置于 55 分钟"/"重置于 2 天 8 小时";
+// 英文: "Resets in 2 hours 29 minutes"。识别失败返回 0 表示未知。
+// SolidStart 流式注释 <!--$-->/<!--/--> 可能出现在任意位置,先剥离再解析。
+func parseSlotResetInSec(block string) int {
+	m := slotResetRe.FindStringSubmatch(block)
+	if m == nil {
+		return 0
+	}
+	text := htmlCommentRe.ReplaceAllString(m[1], " ")
+	// 剥掉 "重置于" / "Resets in" 前缀,保留纯时长短语
+	if idx := strings.Index(text, "重置于"); idx >= 0 {
+		text = text[idx+len("重置于"):]
+	} else if idx := strings.Index(strings.ToLower(text), "resets in"); idx >= 0 {
+		text = strings.ToLower(text)[idx+len("resets in"):]
+	}
+	phrase := strings.Join(strings.Fields(text), " ")
+	return parseDurationToSec(phrase)
+}
+
+// durationUnitsRe 匹配"数字+单位"片段;中英文单位均收录,大小写不敏感靠预处理。
+var durationUnitsRe = regexp.MustCompile(`(\d+)\s*(秒|分钟|分|小时|时|天|日|周|星期|个月|个月份|月|年|seconds?|mins?|minutes?|hours?|days?|weeks?|months?|years?)`)
+
+// durationUnitSec 单位到秒数的映射(月按 30 天粗略估算)。
+var durationUnitSec = map[string]int{
+	"秒":       1,
+	"分":       60,
+	"分钟":      60,
+	"时":       3600,
+	"小时":      3600,
+	"天":       86400,
+	"日":       86400,
+	"周":       604800,
+	"星期":      604800,
+	"月":       2592000,
+	"年":       31536000,
+	"second":  1,
+	"sec":     1,
+	"min":     60,
+	"minute":  60,
+	"hour":    3600,
+	"day":     86400,
+	"week":    604800,
+	"month":   2592000,
+	"year":    31536000,
+}
+
+// parseDurationToSec 解析中/英时长短语为秒数。
+// 例: "2 hours 29 minutes"→8940, "55 分钟"→3300, "2 天 8 小时"→208800。
+// 无法识别任何"数字+单位"片段时返回 0。
+func parseDurationToSec(phrase string) int {
+	if phrase == "" {
+		return 0
+	}
+	total, matched := 0, false
+	for _, m := range durationUnitsRe.FindAllStringSubmatch(phrase, -1) {
+		n, err := strconv.Atoi(m[1])
+		if err != nil {
+			continue
+		}
+		unit := strings.TrimSuffix(strings.ToLower(m[2]), "s")
+		sec, ok := durationUnitSec[unit]
+		if !ok {
+			continue
+		}
+		total += n * sec
+		matched = true
+	}
+	if !matched {
+		return 0
+	}
+	return total
 }

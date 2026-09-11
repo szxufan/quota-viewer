@@ -1,7 +1,7 @@
 // === Wails 绑定 ===
 // window.go.main.App 在运行时由 Wails 注入
 
-import { ballGridFor, credTabLabel, groupHasData, parseOptionValues, providerBadgeText, syncFieldsForMode } from "./settings-helpers.js";
+import { ballGridFor, credTabLabel, parseOptionValues, providerBadgeText, syncFieldsForMode } from "./settings-helpers.js";
 
 // 各视图窗口尺寸,与 Go 侧 ballSize 常量保持一致
 const SIZES = {
@@ -465,8 +465,11 @@ async function loadConfig() {
 // 后端据此还原旧值,未修改的组自然保留
 function collectProviders() {
     return providerCards.map((c) => {
-        // 过滤全空组(无值且无掩码占位):提交无意义,且避免 keys/keyNames 错位
+        // 过滤全空组(无值且无掩码占位):提交无意义,且避免 keys/keyNames 错位。
+        // 例外:免凭证 Provider(如百炼,凭证在 bl CLI 全局登录态)保留一个空组,
+        // 使后端 CredKeys 非空 → fetchAll 能为其创建抓取任务,球格才显示。
         const groups = c.groups.filter((g) =>
+            c.credentialless ||
             g.fields.some((f) => f.input.value || f.input.placeholder)
         );
         const keys = groups.map((g) => {
@@ -540,7 +543,7 @@ function renderProviderList(providers) {
         pages.className = "cred-pages";
         pane.append(tabs, pages);
 
-        const cardObj = { id: p.id, def: p, navItem, pane, enabled: cb, badge, navBadge, tabs, pages, groups: [], active: 0 };
+        const cardObj = { id: p.id, def: p, navItem, pane, enabled: cb, badge, navBadge, tabs, pages, groups: [], active: 0, credentialless: !!p.credentialless };
 
         // 凭证页:已有 keys 逐组渲染,否则默认一组空表单
         const savedKeys = (p.keys && p.keys.length) ? p.keys : [{}];
@@ -734,9 +737,9 @@ function snapshotGroups(cardObj) {
         g.fields.map((f) => ({ value: f.input.value, placeholder: f.input.placeholder })));
 }
 
-// 更新状态徽标(左栏导航 + 右栏详情标题行,文案:未配置 / n 个凭证)
+// 更新状态徽标(左栏导航 + 右栏详情标题行,文案:未配置 / 免凭证 / n 个凭证)
 function updateProviderBadge(cardObj) {
-    const text = providerBadgeText(snapshotGroups(cardObj));
+    const text = providerBadgeText(snapshotGroups(cardObj), cardObj.credentialless);
     cardObj.badge.textContent = text;
     cardObj.navBadge.textContent = text;
 }

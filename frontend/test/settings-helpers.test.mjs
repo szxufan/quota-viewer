@@ -41,6 +41,11 @@ test("providerBadgeText: 按非空组数量显示", () => {
     assert.equal(providerBadgeText([g1, gEmpty, g2]), "2 个凭证"); // 空组不计数
 });
 
+test("providerBadgeText: 免凭证 Provider 恒显示免凭证", () => {
+    assert.equal(providerBadgeText([], true), "免凭证");
+    assert.equal(providerBadgeText([[{ value: "", placeholder: "" }]], true), "免凭证");
+});
+
 const PKG_OPTIONS = [
     { value: "ots", label: "OTS 资源包" },
     { value: "flowbag", label: "VPC 共享流量包" },
