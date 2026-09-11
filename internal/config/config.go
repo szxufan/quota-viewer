@@ -26,7 +26,7 @@ const (
 // SyncConfig 是多机状态同步配置。密码与 AccessKey 与现有凭证一致明文存储,
 // 下发前端时掩码(app.go maskSecret)。
 type SyncConfig struct {
-	Mode            string `json:"mode"` // "" | "publish" | "subscribe"
+	Mode            string `json:"mode"`                        // "" | "publish" | "subscribe"
 	Password        string `json:"password,omitempty"`          // 加密密码(SHA-256 派生 AES-256 密钥)
 	OSSEndpoint     string `json:"oss_endpoint,omitempty"`      // 发布端:OSS Endpoint
 	OSSBucket       string `json:"oss_bucket,omitempty"`        // 发布端:Bucket 名

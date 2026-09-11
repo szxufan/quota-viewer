@@ -169,6 +169,21 @@ var registry = []ProviderDef{
 			return NewBailianFetcher(creds["cli_path"])
 		},
 	},
+	{
+		ID:          "new-api",
+		DisplayName: "New API",
+		Abbr:        "NA",
+		Kind:        KindUsage,
+		Fields: []CredentialField{
+			{Key: "base_url", Label: "BaseUrl", Type: "text", Plain: true},
+			{Key: "channel_id", Label: "channel_id", Type: "text", Plain: true},
+			{Key: "user", Label: "User(请求头 New-Api-User)", Type: "text", Plain: true},
+			{Key: "authorization", Label: "Authorization(请求头原值)", Type: "password"},
+		},
+		Build: func(creds map[string]string) Fetcher {
+			return NewNewAPIFetcher(creds["base_url"], creds["channel_id"], creds["user"], creds["authorization"])
+		},
+	},
 }
 
 // GetAll 返回全部注册 Provider 的副本(固定顺序)。

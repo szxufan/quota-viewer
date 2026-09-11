@@ -66,6 +66,6 @@
 - `tray:refresh` / `tray:toggle` / `tray:settings` 事件名——托盘与 app.go 两端共用契约
 - `quota:update` / `ui:show-settings` 事件名——后端推给前端的契约
 - `QuotaResult` JSON 字段名（platform/id/abbr/kind/key_index/used/total/percent/remaining/reset_at/error）——前端渲染依赖
-- Provider id（kimi/xfyun/opencode-go/mimo/deepseek）与注册表字段定义——config 存储、TestConnection 参数、前端绑定共用契约
+- Provider id（kimi/xfyun/opencode-go/mimo/deepseek/glm/openrouter/aliyun/bailian/new-api）与注册表字段定义——config 存储、TestConnection 参数、前端绑定共用契约
 - 启用下限 1 个 Provider、数量无上限;凭证支持多组(keys)——前后端语义一致
 - 配置 JSON 结构（providers 数组）——已迁移用户配置兼容

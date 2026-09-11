@@ -64,7 +64,7 @@
 ## 当前任务进度
 
 ### ✅ 已完成（本次升级会话）
-- **fetcher 注册表**：`registry.go`（ProviderDef + 凭证字段定义 + Build 工厂，5 个 Provider 固定顺序）；`QuotaResult` 扩展 `ID/Abbr/Kind`（usage/balance）
+- **fetcher 注册表**：`registry.go`（ProviderDef + 凭证字段定义 + Build 工厂，动态注册表）；`QuotaResult` 扩展 `ID/Abbr/Kind`（usage/balance）
 - **恢复 MiMo**：`mimo.go` + `mimo_test.go`（从 git 历史恢复，httptest 全过）
 - **新增 DeepSeek**：`deepseek.go` + 测试（`GET https://api.deepseek.com/user/balance`，余额型，多币种自动选非零）
 - **配置模型 v2**：`Config.Providers []ProviderConfig` 动态结构；旧扁平格式（含 mimo_cookie）Load 时自动迁移并回写；默认启用 kimi/xfyun/opencode-go；钳制最多 3 个
@@ -183,7 +183,7 @@
 
 ### 关键上下文
 - 新增 Provider 的完整路径：`internal/fetcher/` 新抓取器（Fetcher 接口 + baseURL 注入 + 测试）→ `registry.go` 注册（id/显示名/缩写/字段/Build）→ 前端自动适配
-- Provider id 契约：kimi / xfyun / opencode-go / mimo / deepseek（config 存储、TestConnection、前端绑定共用）
+- Provider id 契约：kimi / xfyun / opencode-go / mimo / deepseek / glm / openrouter / aliyun / bailian / new-api（config 存储、TestConnection、前端绑定共用）
 
 ---
 
@@ -252,7 +252,7 @@
 - `workarea_windows.go` / `workarea_other.go` - Win32 工作区查询辅助（非 Windows 桩）
 - `internal/fetcher/registry.go` - **Provider 注册表（新增 Provider 的唯一入口）**
 - `internal/fetcher/types.go` - Fetcher 接口 / QuotaResult / Kind 常量
-- `internal/fetcher/{kimi,xfyun,opencode_go,mimo,deepseek}.go` - 五平台抓取器（均有测试）
+- `internal/fetcher/{kimi,xfyun,opencode_go,mimo,deepseek,bailian,new-api}.go` - 平台抓取器（均有测试）
 - `internal/config/config.go` + `cookie.go` - 动态 Provider 配置 + 旧格式迁移 + PowerShell Cookie 解析
 - `internal/tray/tray.go` - 系统托盘（systray.Run + LockOSThread）
 - `frontend/src/index.html` / `main.js` / `style.css` - 动态球格 + 动态配置面板 UI

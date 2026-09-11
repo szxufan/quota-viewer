@@ -73,7 +73,7 @@ type ProviderInput struct {
 }
 ```
 
-- `providers` 固定 5 条（kimi/xfyun/opencode-go/mimo/deepseek），`enabled` 标记展示
+- `providers` 包含全部注册 Provider，`enabled` 标记展示；新增 Provider 时由 `fetcher.GetAll()` 动态返回
 - `fields` 驱动前端动态渲染凭证输入框（password/text/textarea）
 - `keys` 为掩码后多组凭证（前端放 placeholder，逐组渲染输入框）；`login_url` 空则不渲染"打开登录页"按钮
 
@@ -117,6 +117,6 @@ window.runtime.EventsOn("quota:update", (results) => render(results));
 ## Must NOT Change
 
 - 改 Go 方法签名后必须重新生成 wailsjs 绑定（`wails build` 自动），否则前端调用断裂
-- `TestConnection` 的 platform 字符串 = 注册表 id（"kimi"/"xfyun"/"opencode-go"/"mimo"/"deepseek"），是前后端契约
+- `TestConnection` 的 platform 字符串 = 注册表 id（"kimi"/"xfyun"/"opencode-go"/"mimo"/"deepseek"/"glm"/"openrouter"/"aliyun"/"bailian"/"new-api"），是前后端契约
 - GetConfig 的 providers 数组结构（前端 main.js 渲染依赖）
 - SaveConfig 的钳制语义（0 个 → 全部启用;无上限）与 keys 合并语义（组数相同按索引合并,不同全量替换）

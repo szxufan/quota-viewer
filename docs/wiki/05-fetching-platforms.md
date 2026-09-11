@@ -64,10 +64,12 @@ func Get(id string) (ProviderDef, bool)
 | `mimo` | 小米 MiMo | M | cookie (textarea) | `https://platform.xiaomimimo.com/api/v1/tokenPlan/usage`, Cookie + Referer |
 | `deepseek` | DeepSeek | D | api_key (password) | `https://api.deepseek.com/user/balance`, Bearer |
 | `bailian` | 百炼 | BL | cli_path (text, 可选) | exec 调用 `bl usage token-plan --output json`,认证走 bl CLI 全局登录态 |
+| `new-api` | New API | NA | base_url + channel_id + user + authorization | GET `{BaseUrl}/api/channel/{channel_id}`, `New-Api-User` + 原始 `Authorization` |
 
 - 每个 fetcher 的 `baseURL`/`apiURL` 可重写（构造时传空用默认）——测试通过该参数注入 httptest server
 - OpenCode Go 抓取的是 Dashboard 页面（SSR hydration + data-slot 双模式解析）。2026-09 真机确认：SSR hydration（`rollingUsage:$R[n]={status:"ok",resetInSec:3343,usagePercent:13.6,usage:..,limit:..}`）**仍在**，是主解析路径，但 `usagePercent` 已改为**小数**（如 13.6）；data-slot 备选路径中 label 随 `oc_locale` 变化（中文 `5 小时用量`/`每周用量`/`每月用量`，英文 `Rolling Usage` 等），百分比带 SolidStart 流式注释，重置时间为 `reset-time` 内本地化短语（中文 `重置于 55 分钟`/`2 天 8 小时`，英文 `Resets in ...`），由 `parseDurationToSec`（中英单位）估算秒数，失败则 resetInSec=0
 - DeepSeek 是余额型：`Kind="balance"`，响应 `{"is_available":bool,"balance_infos":[{"currency","total_balance",...}]}`；取**第一条非零余额**的币种（如 USD $0.00 + CNY ¥247.51 → 显示 `余额 ¥247.51 (CNY)`）；`is_available=false` 或全部余额为 0 → Error
+- New API 是带余额的用量型：GET `{BaseUrl}/api/channel/{channel_id}`，请求头为 `New-Api-User: <User>` 和原始 `Authorization`；响应 `data.balance` 直接作为余额，`data.used_quota / 500000` 作为已用金额；`data` 缺失 → Error
 - `format.go` 的 `formatNum` 做千分位展示格式化（仅内部使用）
 
 ### CLI 型抓取器（bailian，首个非 HTTP 实现）
@@ -90,8 +92,9 @@ func Get(id string) (ProviderDef, bool)
 
 全部用 `net/http/httptest` 起假服务，`baseURL` 指向假服务：
 - `kimi_test.go` / `xfyun_test.go` / `opencode_go_test.go` / `mimo_test.go` / `deepseek_test.go` 覆盖成功/失败/异常 JSON 路径
+- `new-api_test.go` 覆盖 URL/请求头、余额与已用金额换算、缺配置、401、非 200、异常 JSON 和缺失 data
 - 例外：`bailian_test.go` 用假 CLI 脚本（Windows `.cmd` / shell 脚本）注入 `f.execPath`，不起 httptest
-- `registry_test.go` 校验注册表完整性（9 个、顺序、字段定义、Build 可执行）
+- `registry_test.go` 校验注册表完整性（10 个、顺序、字段定义、Build 可执行）
 
 ---
 
@@ -101,7 +104,7 @@ func Get(id string) (ProviderDef, bool)
 |---|---|
 | `internal/fetcher/types.go` | QuotaResult + Fetcher 接口 + Kind 常量（契约核心） |
 | `internal/fetcher/registry.go` | ProviderDef + 注册表（新增 Provider 的唯一入口） |
-| `internal/fetcher/kimi.go` / `xfyun.go` / `opencode_go.go` / `mimo.go` / `deepseek.go` | 各平台实现 |
+| `internal/fetcher/kimi.go` / `xfyun.go` / `opencode_go.go` / `mimo.go` / `deepseek.go` / `bailian.go` / `new-api.go` | 各平台实现 |
 | `internal/fetcher/format.go` | 千分位格式化 |
 
 ---

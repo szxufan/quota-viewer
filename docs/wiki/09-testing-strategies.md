@@ -22,7 +22,7 @@
 |---|---|---|
 | 配置持久化 | `internal/config/config_test.go` | Load 默认值 / Save 往返（含多组 keys）/ 旧格式迁移（含 mimo_cookie 与 CredKeys 兼容） |
 | 抓取器 | `internal/fetcher/*_test.go` | `net/http/httptest` 假服务 + baseURL 注入；成功/失败/异常 JSON 路径 |
-| 注册表 | `internal/fetcher/registry_test.go` | 5 个 Provider、顺序稳定、字段定义完整、Build 可执行不 panic |
+| 注册表 | `internal/fetcher/registry_test.go` | 10 个 Provider、顺序稳定、字段定义完整、Build 可执行不 panic |
 | 托盘 | 无测试 | 依赖 GUI，手工验证 |
 | 窗口定位 | 无测试 | 依赖真实显示器环境，手工验证（多屏/DPI 需实测） |
 | 前端纯函数 | `frontend/test/*.test.mjs` | Node 内置 `node --test`（零依赖）；新增可单测的设置界面逻辑放 `settings-helpers.js` |
@@ -31,7 +31,7 @@
 ### 约定
 
 - fetcher 测试通过构造参数 `baseURL`/`apiURL` 指向 httptest server，**不发真实网络请求**
-- 新平台抓取器必须带测试（现有 kimi/xfyun/opencode_go/mimo/deepseek 均有）
+- 新平台抓取器必须带测试（现有 kimi/xfyun/opencode_go/mimo/deepseek/new-api 均有）
 - 新增 Provider 时 registry_test 自动校验定义完整性
 - 配置结构变更必须同步 config_test.go（含迁移用例）
 - 前端设置界面的可单测逻辑集中在 `frontend/src/settings-helpers.js`，改动后 `npm test` 必须通过；DOM 级交互以构建 + 手动冒烟为准

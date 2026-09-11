@@ -341,3 +341,4 @@ wails build
 | `opencode-go` | OpenCode Go | Go | Workspace ID + Session Token | usage | `opencode_go.go` |
 | `mimo` | 小米 MiMo | M | Cookie | usage | `mimo.go` |
 | `deepseek` | DeepSeek | D | API Key (Bearer) | balance | `deepseek.go` |
+| `new-api` | New API | NA | BaseUrl + channel_id + New-Api-User + Authorization | usage | `new-api.go` |
