@@ -42,14 +42,33 @@ func TestNewAPIFetcher_OK_ParsesBalanceAndUsedAmount(t *testing.T) {
 	if math.Abs(result.Used-wantUsed) > 1e-9 {
 		t.Errorf("expected Used=%f, got %f", wantUsed, result.Used)
 	}
-	if result.Total != 0 {
-		t.Errorf("expected Total=0, got %f", result.Total)
+	wantTotal := 12.34 + wantUsed
+	if math.Abs(result.Total-wantTotal) > 1e-9 {
+		t.Errorf("expected Total=%f, got %f", wantTotal, result.Total)
 	}
-	if result.Percent != 0 {
-		t.Errorf("expected Percent=0, got %f", result.Percent)
+	wantPercent := wantUsed / wantTotal * 100
+	if math.Abs(result.Percent-wantPercent) > 1e-9 {
+		t.Errorf("expected Percent=%f, got %f", wantPercent, result.Percent)
 	}
 	if !strings.Contains(result.Remaining, "12.34") || !strings.Contains(result.Remaining, "0.02469") {
 		t.Errorf("unexpected Remaining: %q", result.Remaining)
+	}
+}
+
+// 余额<=0(渠道未启用余额获取)时总量未知,不计算进度,前端不绘制进度条
+func TestNewAPIFetcher_ZeroBalance_NoPercent(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":{"balance":0,"used_quota":12345}}`))
+	}))
+	defer server.Close()
+
+	result := NewNewAPIFetcher(server.URL, "42", "alice", "Bearer token").Fetch()
+	if result.Error != "" {
+		t.Fatalf("unexpected error: %s", result.Error)
+	}
+	if result.Total != 0 || result.Percent != 0 {
+		t.Errorf("expected Total=0 Percent=0, got Total=%f Percent=%f", result.Total, result.Percent)
 	}
 }
 

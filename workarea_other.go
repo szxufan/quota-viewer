@@ -14,3 +14,6 @@ func setupWindowStyles(title string) bool {
 
 // setWindowOpacity 非 Windows 平台暂无窗口级透明度实现(空操作)。
 func setWindowOpacity(alpha float64) {}
+
+// displayChangeCb 非 Windows 平台无显示器变化事件源,仅声明以供 app.go 赋值。
+var displayChangeCb func()

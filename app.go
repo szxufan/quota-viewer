@@ -29,6 +29,11 @@ type App struct {
 	expanded bool
 	savedX   int
 	savedY   int
+
+	// curW/curH 记录当前窗口逻辑尺寸(收起态为球尺寸,展开态为面板尺寸),
+	// 供显示器变化后重新钳制位置使用
+	curW int
+	curH int
 }
 
 func NewApp() *App {
@@ -51,8 +56,15 @@ func (a *App) OnStartup(ctx context.Context) {
 	setupWindowStyles("Quota Viewer")
 	wailsruntime.WindowSetMinSize(ctx, ballSize, ballSize)
 	wailsruntime.WindowSetSize(ctx, ballSize, ballSize)
+	a.mu.Lock()
+	a.curW, a.curH = ballSize, ballSize
+	a.mu.Unlock()
 	// 样式切换后重申置顶,防止球窗被其它窗口盖住
 	wailsruntime.WindowSetAlwaysOnTop(ctx, true)
+
+	// 显示器拓扑/分辨率/DPI 变化时把窗口钳回可见工作区,防止球留在已消失的
+	// 屏幕区域外而"看不见"(回调在 Windows 消息线程触发,内部异步执行)
+	displayChangeCb = func() { a.reclampWindow() }
 
 	// 应用已保存的界面透明度(窗口级 alpha,见 setWindowOpacity)
 	setWindowOpacity(a.cfg.Opacity)
@@ -504,6 +516,9 @@ func (a *App) SetBallSize(size int) {
 		return
 	}
 	ballSize = size
+	a.mu.Lock()
+	a.curW, a.curH = size, size
+	a.mu.Unlock()
 	wailsruntime.WindowSetMinSize(a.ctx, ballSize, ballSize)
 	wailsruntime.WindowSetSize(a.ctx, ballSize, ballSize)
 	// 尺寸变化后重新钳制位置,保证球完整落在屏幕内
@@ -541,6 +556,9 @@ func (a *App) ExpandWindow(w, h int) {
 			h = maxH
 		}
 	}
+	a.mu.Lock()
+	a.curW, a.curH = w, h
+	a.mu.Unlock()
 
 	if nx, ny, ok := fitToScreen(a.ctx, x, y, w, h); ok {
 		x, y = nx, ny
@@ -559,6 +577,7 @@ func (a *App) CollapseWindow(size int) {
 	}
 	a.mu.Lock()
 	a.expanded = false
+	a.curW, a.curH = size, size
 	x, y := a.savedX, a.savedY
 	a.mu.Unlock()
 
@@ -572,6 +591,45 @@ func (a *App) CollapseWindow(size int) {
 	}
 	wailsruntime.WindowSetSize(a.ctx, ballSize, ballSize)
 	wailsruntime.WindowSetPosition(a.ctx, x, y)
+}
+
+// reclampWindow 显示器拓扑/分辨率/DPI 变化后的恢复入口:窗口(悬浮球或展开面板)
+// 若已不在可见工作区内,重新钳制回屏内;完整可见则保持不动,避免把贴边的球
+// 推离屏幕边缘。由 Windows 消息线程经 displayChangeCb 触发,本方法已运行在
+// 新 goroutine 中,直接调用 wails runtime(派发回主线程)不会死锁。
+func (a *App) reclampWindow() {
+	if a.ctx == nil {
+		return
+	}
+	a.mu.Lock()
+	expanded, w, h := a.expanded, a.curW, a.curH
+	a.mu.Unlock()
+
+	if expanded {
+		// 展开态:复用 ExpandWindow 的尺寸+位置钳制(锚点仍是展开前的球位置)
+		a.ExpandWindow(w, h)
+		return
+	}
+	a.ensureOnScreen(w, h)
+}
+
+// ensureOnScreen 若窗口已不完整落在可见工作区内,则重新钳制位置并保存,
+// 避免下次启动仍从旧位置恢复。
+func (a *App) ensureOnScreen(w, h int) {
+	x, y := wailsruntime.WindowGetPosition(a.ctx)
+	// 已完整可见(允许贴边,不留边距)则不打扰
+	if wx, wy, ww, wh, dpi, ok := workAreaForPoint(x, y); ok && dpi > 0 {
+		pw, ph := w*dpi/96, h*dpi/96
+		if x >= wx && y >= wy && x+pw <= wx+ww && y+ph <= wy+wh {
+			return
+		}
+	}
+	if nx, ny, ok := fitToScreen(a.ctx, x, y, w, h); ok {
+		wailsruntime.WindowSetPosition(a.ctx, nx, ny)
+		if px, py := wailsruntime.WindowGetPosition(a.ctx); px != x || py != y {
+			a.SaveBallPosition(px, py)
+		}
+	}
 }
 
 // fitToScreen 计算让 w×h(逻辑像素)窗口完整落在球所在屏幕内的位置。

@@ -37,6 +37,10 @@ var (
 
 	subclassCB uintptr // 持有回调引用,防止被 GC 回收
 	windowHWND uintptr // 应用主窗口句柄(setupWindowStyles 中保存)
+
+	// displayChangeCb 由 app.go 在启动时注册,显示器拓扑/分辨率/DPI 变化时
+	// 在消息线程触发。回调内部必须异步执行(见 minTrackSubclassProc)。
+	displayChangeCb func()
 )
 
 const (
@@ -55,6 +59,8 @@ const (
 	lwaAlpha = 0x00000002 // LWA_ALPHA:按 alpha 值控制窗口整体不透明度
 
 	wmGetMinMaxInfo = 0x0024
+	wmDisplayChange = 0x007E // 显示器分辨率/拓扑变化
+	wmDpiChanged    = 0x02E0 // 每显示器 DPI 变化
 
 	swpNoSize       = 0x0001
 	swpNoMove       = 0x0002
@@ -65,7 +71,8 @@ const (
 
 // minTrackSubclassProc 拦截 WM_GETMINMAXINFO:overlapped 窗口有系统默认最小宽度
 // (高 DPI 下约 262px 物理,会把 60px 球窗撑宽),这里把最小拖动尺寸压到
-// ballSize 对应的物理像素。其余消息走默认子类过程。
+// ballSize 对应的物理像素。同时监听 WM_DISPLAYCHANGE / WM_DPICHANGED,
+// 分辨率或 DPI 变化时通知 app.go 把窗口钳回可见工作区。其余消息走默认子类过程。
 func minTrackSubclassProc(hwnd uintptr, msg uint32, wparam uintptr, lparam unsafe.Pointer, uIDSubclass, dwRefData uintptr) uintptr {
 	if msg == wmGetMinMaxInfo {
 		dpi, _, _ := procGetDpiForWindow.Call(hwnd)
@@ -78,6 +85,11 @@ func minTrackSubclassProc(hwnd uintptr, msg uint32, wparam uintptr, lparam unsaf
 		p[0] = minPx
 		p[1] = minPx
 		return 0
+	}
+	if (msg == wmDisplayChange || msg == wmDpiChanged) && displayChangeCb != nil {
+		// 消息线程内不得直接调用 wails runtime(它会同步派发回主线程导致死锁),
+		// 丢给新 goroutine 异步处理
+		go displayChangeCb()
 	}
 	ret, _, _ := procDefSubclassProc.Call(hwnd, uintptr(msg), wparam, uintptr(lparam))
 	return ret

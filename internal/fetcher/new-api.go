@@ -114,6 +114,12 @@ func (f *NewAPIFetcher) Fetch() QuotaResult {
 	usedAmount := body.Data.UsedQuota / newAPIQuotaScale
 	result.Balance = body.Data.Balance
 	result.Used = usedAmount
+	// 进度 = 已用 / (余额+已用),与 Remaining 展示口径一致;
+	// 余额<=0(渠道未启用余额获取)时总量未知,保持 Percent=0,前端不绘制进度条
+	if body.Data.Balance > 0 {
+		result.Total = body.Data.Balance + usedAmount
+		result.Percent = usedAmount / result.Total * 100
+	}
 	result.Remaining = fmt.Sprintf(
 		"余额 %s；已用金额 %s",
 		strconv.FormatFloat(body.Data.Balance, 'f', -1, 64),
