@@ -348,6 +348,19 @@ document.getElementById("input-opacity").addEventListener("change", async (e) =>
     }
 });
 
+// 开机自启动:勾选即时生效(写注册表+持久化配置),失败回滚勾选状态
+document.getElementById("input-autostart").addEventListener("change", async (e) => {
+    const checked = e.target.checked;
+    try {
+        await window.go.main.App.SetAutoStart(checked);
+        toast(checked ? "已开启开机自启动" : "已关闭开机自启动", "success");
+    } catch (err) {
+        e.target.checked = !checked; // 回滚,与注册表实际状态保持一致
+        console.error("setAutoStart error:", err);
+        toast("设置开机自启动失败: " + err, "error");
+    }
+});
+
 // === 状态同步(多机共享,见 oss-state-sync.md) ===
 // 发布端:状态加密上传 OSS;订阅端:公网下载解密展示,本机不抓取。
 
@@ -450,6 +463,8 @@ async function loadConfig() {
         renderSyncSection();
         renderProviderList(cfg.providers || []);
         document.getElementById("input-interval").value = cfg.refresh_interval_min || 15;
+        // 开机自启动开关回显
+        document.getElementById("input-autostart").checked = !!cfg.auto_start;
         // 透明度:同步滑块显示(窗口 alpha 已由 Go OnStartup 应用)
         const opacity = typeof cfg.opacity === "number" ? cfg.opacity : 1;
         document.getElementById("input-opacity").value = opacity;

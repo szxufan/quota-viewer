@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"quota-viewer/internal/autostart"
 	"quota-viewer/internal/config"
 	"quota-viewer/internal/fetcher"
 	"quota-viewer/internal/tray"
@@ -30,10 +31,11 @@ type App struct {
 	savedX   int
 	savedY   int
 
-	// curW/curH 记录当前窗口逻辑尺寸(收起态为球尺寸,展开态为面板尺寸),
-	// 供显示器变化后重新钳制位置使用
-	curW int
-	curH int
+	// doneReclamp 关闭时停止显示器变化轮询 goroutine(见 pollDisplay)
+	doneReclamp chan struct{}
+
+	// reclampMu 串行化消息与轮询两条窗口位置纠正路径,防止并发重复移动窗口
+	reclampMu sync.Mutex
 }
 
 func NewApp() *App {
@@ -42,7 +44,8 @@ func NewApp() *App {
 		cfg = config.Default()
 	}
 	return &App{
-		cfg: cfg,
+		cfg:         cfg,
+		doneReclamp: make(chan struct{}),
 	}
 }
 
@@ -56,18 +59,24 @@ func (a *App) OnStartup(ctx context.Context) {
 	setupWindowStyles("Quota Viewer")
 	wailsruntime.WindowSetMinSize(ctx, ballSize, ballSize)
 	wailsruntime.WindowSetSize(ctx, ballSize, ballSize)
-	a.mu.Lock()
-	a.curW, a.curH = ballSize, ballSize
-	a.mu.Unlock()
 	// 样式切换后重申置顶,防止球窗被其它窗口盖住
 	wailsruntime.WindowSetAlwaysOnTop(ctx, true)
 
 	// 显示器拓扑/分辨率/DPI 变化时把窗口钳回可见工作区,防止球留在已消失的
-	// 屏幕区域外而"看不见"(回调在 Windows 消息线程触发,内部异步执行)
+	// 屏幕区域外而"看不见"。双通道:系统消息触发即时钳制(见 workarea_windows.go
+	// 的 displayChangeCb);pollDisplay 周期轮询兜底——工具窗口可能收不到
+	// 系统广播,轮询直接读窗口矩形与工作区,不依赖消息投递
 	displayChangeCb = func() { a.reclampWindow() }
+	go a.pollDisplay()
 
 	// 应用已保存的界面透明度(窗口级 alpha,见 setWindowOpacity)
 	setWindowOpacity(a.cfg.Opacity)
+
+	// 已开启开机自启动时静默重写一次注册表(幂等):自启动记录的是 exe 绝对路径,
+	// 自动更新/移动安装位置后旧路径会失效,启动时刷新保证指向当前 exe
+	if a.cfg.AutoStart {
+		_ = autostart.Enable()
+	}
 
 	// 恢复悬浮球位置(配置中 BallX/BallY >= 0 时生效)
 	// BallX/BallY 来自 WindowGetPosition 返回的虚拟桌面绝对坐标,
@@ -94,12 +103,15 @@ func (a *App) OnStartup(ctx context.Context) {
 		} else {
 			a.visible.Store(true)
 			wailsruntime.WindowShow(ctx)
+			// 隐藏期间分辨率可能已变化,唤出后立即校正位置
+			go a.reclampWindow()
 		}
 	})
 	wailsruntime.EventsOn(ctx, "tray:settings", func(...interface{}) {
 		// 窗口被隐藏时先从托盘唤出,否则配置面板不可见
 		a.visible.Store(true)
 		wailsruntime.WindowShow(ctx)
+		go a.reclampWindow()
 		wailsruntime.EventsEmit(ctx, "ui:show-settings")
 	})
 
@@ -117,11 +129,12 @@ func (a *App) GetVersion() string {
 	return Version
 }
 
-// OnShutdown 在应用退出时清理托盘图标。
+// OnShutdown 在应用退出时清理托盘图标并停止显示器变化轮询。
 func (a *App) OnShutdown(ctx context.Context) {
 	if a.tray != nil {
 		a.tray.Quit()
 	}
+	close(a.doneReclamp)
 }
 
 // Refresh 抓取并推送事件到前端。
@@ -257,6 +270,7 @@ func (a *App) GetConfig() map[string]interface{} {
 		"ball_x":               a.cfg.BallX,
 		"ball_y":               a.cfg.BallY,
 		"opacity":              a.cfg.Opacity,
+		"auto_start":           a.cfg.AutoStart,
 		"sync":                 syncMasked,
 	}
 }
@@ -281,6 +295,23 @@ func (a *App) SetOpacity(opacity float64) error {
 // 滑块拖动过程中调用,避免频繁写盘;松开滑块由 SetOpacity 持久化。
 func (a *App) SetOpacityPreview(opacity float64) {
 	setWindowOpacity(opacity)
+}
+
+// SetAutoStart 开关开机自启动。先写注册表(失败则不动配置),成功后持久化,
+// 保证配置里的勾选状态与注册表实际状态一致。
+func (a *App) SetAutoStart(enabled bool) error {
+	if enabled {
+		if err := autostart.Enable(); err != nil {
+			return err
+		}
+	} else if err := autostart.Disable(); err != nil {
+		return err
+	}
+	a.mu.Lock()
+	a.cfg.AutoStart = enabled
+	err := config.Save(a.cfg)
+	a.mu.Unlock()
+	return err
 }
 
 // settingsMode 记录当前是否处于设置界面模式(不透明)
@@ -516,9 +547,6 @@ func (a *App) SetBallSize(size int) {
 		return
 	}
 	ballSize = size
-	a.mu.Lock()
-	a.curW, a.curH = size, size
-	a.mu.Unlock()
 	wailsruntime.WindowSetMinSize(a.ctx, ballSize, ballSize)
 	wailsruntime.WindowSetSize(a.ctx, ballSize, ballSize)
 	// 尺寸变化后重新钳制位置,保证球完整落在屏幕内
@@ -556,9 +584,6 @@ func (a *App) ExpandWindow(w, h int) {
 			h = maxH
 		}
 	}
-	a.mu.Lock()
-	a.curW, a.curH = w, h
-	a.mu.Unlock()
 
 	if nx, ny, ok := fitToScreen(a.ctx, x, y, w, h); ok {
 		x, y = nx, ny
@@ -577,7 +602,6 @@ func (a *App) CollapseWindow(size int) {
 	}
 	a.mu.Lock()
 	a.expanded = false
-	a.curW, a.curH = size, size
 	x, y := a.savedX, a.savedY
 	a.mu.Unlock()
 
@@ -593,41 +617,30 @@ func (a *App) CollapseWindow(size int) {
 	wailsruntime.WindowSetPosition(a.ctx, x, y)
 }
 
-// reclampWindow 显示器拓扑/分辨率/DPI 变化后的恢复入口:窗口(悬浮球或展开面板)
-// 若已不在可见工作区内,重新钳制回屏内;完整可见则保持不动,避免把贴边的球
-// 推离屏幕边缘。由 Windows 消息线程经 displayChangeCb 触发,本方法已运行在
-// 新 goroutine 中,直接调用 wails runtime(派发回主线程)不会死锁。
+// reclampWindow 显示器拓扑/分辨率/DPI 变化后纠正窗口位置:窗口矩形(悬浮球
+// 或展开面板)未完整落在可见工作区时平移回屏内,详见 ensureWindowOnScreen。
+// 消息触发与轮询两条路径经 reclampMu 串行,防止并发重复移动窗口。
+// 位置纠正不写回配置:下次启动恢复 BallX/BallY 时 fitToScreen 会自行钳制。
 func (a *App) reclampWindow() {
-	if a.ctx == nil {
-		return
-	}
-	a.mu.Lock()
-	expanded, w, h := a.expanded, a.curW, a.curH
-	a.mu.Unlock()
-
-	if expanded {
-		// 展开态:复用 ExpandWindow 的尺寸+位置钳制(锚点仍是展开前的球位置)
-		a.ExpandWindow(w, h)
-		return
-	}
-	a.ensureOnScreen(w, h)
+	a.reclampMu.Lock()
+	defer a.reclampMu.Unlock()
+	ensureWindowOnScreen()
 }
 
-// ensureOnScreen 若窗口已不完整落在可见工作区内,则重新钳制位置并保存,
-// 避免下次启动仍从旧位置恢复。
-func (a *App) ensureOnScreen(w, h int) {
-	x, y := wailsruntime.WindowGetPosition(a.ctx)
-	// 已完整可见(允许贴边,不留边距)则不打扰
-	if wx, wy, ww, wh, dpi, ok := workAreaForPoint(x, y); ok && dpi > 0 {
-		pw, ph := w*dpi/96, h*dpi/96
-		if x >= wx && y >= wy && x+pw <= wx+ww && y+ph <= wy+wh {
-			return
-		}
+// pollDisplay 显示器变化兜底轮询:周期读取窗口矩形与工作区并纠正位置
+// (见 ensureWindowOnScreen)。纯 Win32 查询开销为微秒级;拖动中自动跳过。
+func (a *App) pollDisplay() {
+	if runtime.GOOS != "windows" {
+		return
 	}
-	if nx, ny, ok := fitToScreen(a.ctx, x, y, w, h); ok {
-		wailsruntime.WindowSetPosition(a.ctx, nx, ny)
-		if px, py := wailsruntime.WindowGetPosition(a.ctx); px != x || py != y {
-			a.SaveBallPosition(px, py)
+	t := time.NewTicker(500 * time.Millisecond)
+	defer t.Stop()
+	for {
+		select {
+		case <-t.C:
+			a.reclampWindow()
+		case <-a.doneReclamp:
+			return
 		}
 	}
 }

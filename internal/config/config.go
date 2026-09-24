@@ -13,6 +13,7 @@ type Config struct {
 	BallX              int              `json:"ball_x"`
 	BallY              int              `json:"ball_y"`
 	Opacity            float64          `json:"opacity"` // 界面透明度 0.2-1.0,1.0 = 不透明
+	AutoStart          bool             `json:"auto_start"` // 开机自启动(Windows: HKCU Run 注册表键)
 	Sync               SyncConfig       `json:"sync,omitempty"`
 }
 

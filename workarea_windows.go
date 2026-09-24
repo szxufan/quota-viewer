@@ -34,6 +34,9 @@ var (
 	procSetWindowSub      = winComctl32.NewProc("SetWindowSubclass")
 	procDefSubclassProc   = winComctl32.NewProc("DefSubclassProc")
 	procSetLayeredWinAttr = winUser32.NewProc("SetLayeredWindowAttributes")
+	procGetWindowRect     = winUser32.NewProc("GetWindowRect")
+	procMonitorFromRect   = winUser32.NewProc("MonitorFromRect")
+	procGetAsyncKeyState  = winUser32.NewProc("GetAsyncKeyState")
 
 	subclassCB uintptr // 持有回调引用,防止被 GC 回收
 	windowHWND uintptr // 应用主窗口句柄(setupWindowStyles 中保存)
@@ -61,6 +64,8 @@ const (
 	wmGetMinMaxInfo = 0x0024
 	wmDisplayChange = 0x007E // 显示器分辨率/拓扑变化
 	wmDpiChanged    = 0x02E0 // 每显示器 DPI 变化
+
+	vkLButton = 0x01 // 鼠标左键,用于判断用户是否正在拖动窗口
 
 	swpNoSize       = 0x0001
 	swpNoMove       = 0x0002
@@ -150,6 +155,65 @@ func setWindowOpacity(alpha float64) {
 			swpNoMove|swpNoSize|swpNoZOrder|swpNoActivate|swpFrameChanged)
 	}
 	procSetLayeredWinAttr.Call(windowHWND, 0, uintptr(alpha*255), lwaAlpha)
+}
+
+// ensureWindowOnScreen 检查主窗口矩形(物理像素,悬浮球与展开面板均适用)是否
+// 完整落在可见工作区内;不在(分辨率变化/拔掉显示器/DPI 调整把窗口留在屏幕外)
+// 时按窗口当前实际尺寸平移回最近显示器的工作区,不改窗口尺寸。
+// 纯 Win32 实现,不依赖消息投递——WM_DISPLAYCHANGE 等系统广播可能不送达
+// 工具窗口,因此除消息触发外主要由 app.go 周期轮询调用兜底。
+func ensureWindowOnScreen() {
+	if windowHWND == 0 {
+		return
+	}
+	// 左键按住视为正在拖动,跳过本轮:拖动过程中球允许短暂探出屏幕,
+	// 强行拉回会打断/抖动拖动
+	if r, _, _ := procGetAsyncKeyState.Call(vkLButton); int16(r) < 0 {
+		return
+	}
+
+	var rc winRect
+	if ret, _, _ := procGetWindowRect.Call(windowHWND, uintptr(unsafe.Pointer(&rc))); ret == 0 {
+		return
+	}
+	// 取包含窗口矩形的显示器;整窗落在已消失屏幕的死角时退回最近显示器
+	hmon, _, _ := procMonitorFromRect.Call(uintptr(unsafe.Pointer(&rc)), monitorDefaultToNearest)
+	if hmon == 0 {
+		return
+	}
+	var mi monitorInfo
+	mi.cbSize = uint32(unsafe.Sizeof(mi))
+	if ret, _, _ := procGetMonitorInfoW.Call(hmon, uintptr(unsafe.Pointer(&mi))); ret == 0 {
+		return
+	}
+
+	w, h := rc.right-rc.left, rc.bottom-rc.top
+	nx, ny := rc.left, rc.top
+	if nx < mi.rcWork.left {
+		nx = mi.rcWork.left
+	}
+	if ny < mi.rcWork.top {
+		ny = mi.rcWork.top
+	}
+	if nx+w > mi.rcWork.right {
+		nx = mi.rcWork.right - w
+	}
+	if ny+h > mi.rcWork.bottom {
+		ny = mi.rcWork.bottom - h
+	}
+	// 窗口比工作区还大(极端小屏)时对齐到左上,避免负坐标来回抖动
+	if nx < mi.rcWork.left {
+		nx = mi.rcWork.left
+	}
+	if ny < mi.rcWork.top {
+		ny = mi.rcWork.top
+	}
+
+	if nx == rc.left && ny == rc.top {
+		return // 已完整可见,不动(不打扰贴边摆放)
+	}
+	procSetWindowPos.Call(windowHWND, 0, uintptr(uint32(nx)), uintptr(uint32(ny)), 0, 0,
+		swpNoSize|swpNoZOrder|swpNoActivate)
 }
 
 // workAreaForPoint 返回包含点 (px,py)(物理像素)的显示器工作区(不含任务栏)

@@ -17,3 +17,7 @@ func setWindowOpacity(alpha float64) {}
 
 // displayChangeCb 非 Windows 平台无显示器变化事件源,仅声明以供 app.go 赋值。
 var displayChangeCb func()
+
+// ensureWindowOnScreen 非 Windows 平台无纯 Win32 实现(空操作);
+// pollDisplay 仅在 Windows 上启动轮询。
+func ensureWindowOnScreen() {}
