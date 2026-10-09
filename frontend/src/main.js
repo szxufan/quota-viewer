@@ -2,6 +2,7 @@
 // window.go.main.App 在运行时由 Wails 注入
 
 import { ballGridFor, credTabLabel, parseOptionValues, providerBadgeText, syncFieldsForMode } from "./settings-helpers.js";
+import { buildResetHtml, formatCountdown } from "./quota-helpers.js";
 
 // 各视图窗口尺寸,与 Go 侧 ballSize 常量保持一致
 const SIZES = {
@@ -165,9 +166,8 @@ function renderResults(results) {
         items.forEach((r, ki) => {
             const c = getStatusColor(r);
             const percent = r.error ? 0 : r.percent || 0;
-            const resetHtml = (r.reset_at && !r.error)
-                ? `<div class="quota-reset" data-reset-at="${r.reset_at}">${formatCountdown(r.reset_at)}</div>`
-                : "";
+            // 多周期渠道逐周期一行倒计时,单周期/无刷新时间由 buildResetHtml 内部回退
+            const resetHtml = buildResetHtml(r);
             // 优先显示配置的凭证名,否则多 key 时回退 "Key N"(单 key 留空)
             const keyLabel = r.key_name || (items.length > 1 ? "Key " + (ki + 1) : "");
             const cell = document.createElement("div");
@@ -212,23 +212,12 @@ function worstColor(items) {
 }
 
 // === 倒计时 ===
-function formatCountdown(isoStr) {
-    const target = new Date(isoStr);
-    if (isNaN(target.getTime())) return "";
-    const diff = target - Date.now();
-    if (diff <= 0) return "已过期";
-    const days = Math.floor(diff / 86400000);
-    const hours = Math.floor((diff % 86400000) / 3600000);
-    const mins = Math.floor((diff % 3600000) / 60000);
-    if (days > 0) return `距下次刷新: ${days}天${hours}时${mins}分`;
-    if (hours > 0) return `距下次刷新: ${hours}时${mins}分`;
-    return `距下次刷新: ${mins}分`;
-}
-
+// formatCountdown / buildResetHtml 见 quota-helpers.js(纯逻辑,可单测)
 function updateCountdowns() {
     document.querySelectorAll(".quota-reset").forEach((el) => {
         const resetAt = el.getAttribute("data-reset-at");
-        const text = formatCountdown(resetAt);
+        const label = el.getAttribute("data-period-label") || "";
+        const text = formatCountdown(resetAt, label);
         if (text) el.textContent = text;
     });
 }

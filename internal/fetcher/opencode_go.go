@@ -208,7 +208,18 @@ func (f *OpenCodeGoFetcher) Fetch() QuotaResult {
 			windowLabel(w.windowType), formatPercent(w.usagePercent), formatPercent(100-w.usagePercent)))
 	}
 	result.Remaining = strings.Join(lines, "\n")
-	result.ResetAt = time.Now().Add(time.Duration(best.resetInSec) * time.Second).Format(time.RFC3339)
+	now := time.Now()
+	result.ResetAt = now.Add(time.Duration(best.resetInSec) * time.Second).Format(time.RFC3339)
+	// 多周期:各窗口刷新时间逐条展示(resetInSec<=0 表示未知,跳过)
+	for _, w := range windows {
+		if w.resetInSec <= 0 {
+			continue
+		}
+		result.PeriodResets = append(result.PeriodResets, PeriodReset{
+			Label:   windowLabel(w.windowType),
+			ResetAt: now.Add(time.Duration(w.resetInSec) * time.Second).Format(time.RFC3339),
+		})
+	}
 
 	return result
 }

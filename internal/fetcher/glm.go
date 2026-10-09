@@ -174,6 +174,13 @@ func (f *GLMFetcher) Fetch() QuotaResult {
 	result.Total = best.total
 	result.Percent = best.percent
 	result.ResetAt = best.resetAt
+	// 多周期:各窗口刷新时间逐条展示(未知刷新时间的窗口跳过)
+	for _, w := range windows {
+		if w.resetAt == "" {
+			continue
+		}
+		result.PeriodResets = append(result.PeriodResets, PeriodReset{Label: w.label, ResetAt: w.resetAt})
+	}
 	// 全部窗口展示在 Remaining(每个窗口一行)
 	var lines []string
 	for _, w := range windows {

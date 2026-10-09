@@ -156,6 +156,25 @@ func TestOpenCodeGoFetcher_SSRData_PicksHighestPercent(t *testing.T) {
 	if err != nil {
 		t.Errorf("expected valid ISO time in ResetAt, got '%s': %v", result.ResetAt, err)
 	}
+	// 多周期:rolling/weekly/monthly 三个窗口的刷新时间均出现在 PeriodResets
+	if len(result.PeriodResets) != 3 {
+		t.Fatalf("expected 3 PeriodResets, got %+v", result.PeriodResets)
+	}
+	wantLabels := []string{"5小时窗口", "周窗口", "月窗口"}
+	wantSecs := []int{18000, 540000, 2480000}
+	for i, p := range result.PeriodResets {
+		if p.Label != wantLabels[i] {
+			t.Errorf("PeriodResets[%d].Label = %q, want %q", i, p.Label, wantLabels[i])
+		}
+		got, err := time.Parse(time.RFC3339, p.ResetAt)
+		if err != nil {
+			t.Errorf("PeriodResets[%d].ResetAt not RFC3339: %q: %v", i, p.ResetAt, err)
+			continue
+		}
+		if diff := time.Until(got).Seconds() - float64(wantSecs[i]); diff < -5 || diff > 5 {
+			t.Errorf("PeriodResets[%d].ResetAt expected ≈ now+%ds, got %s", i, wantSecs[i], p.ResetAt)
+		}
+	}
 }
 
 // TestOpenCodeGoFetcher_SSRData_TiebreakerMonthlyWins 验证相同百分比时 rolling < weekly < monthly。
@@ -393,6 +412,10 @@ func TestOpenCodeGoFetcher_NewPageFormat_MissingResetTime(t *testing.T) {
 	}
 	if result.Percent != 7 {
 		t.Errorf("expected Percent=7, got %f", result.Percent)
+	}
+	// reset-time 未知(resetInSec=0)的窗口不进入 PeriodResets
+	if len(result.PeriodResets) != 0 {
+		t.Errorf("expected no PeriodResets when resetInSec unknown, got %+v", result.PeriodResets)
 	}
 }
 

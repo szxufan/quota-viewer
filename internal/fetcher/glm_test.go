@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestGLM_EmptyToken_ReturnsError(t *testing.T) {
@@ -82,6 +83,49 @@ func TestGLM_OK_ParsesQuota(t *testing.T) {
 	}
 	if result.ResetAt == "" {
 		t.Error("expected non-empty ResetAt")
+	}
+	// 多周期:5小时 + 1周两个窗口的刷新时间均出现在 PeriodResets
+	if len(result.PeriodResets) != 2 {
+		t.Fatalf("expected 2 PeriodResets, got %+v", result.PeriodResets)
+	}
+	want5h := time.UnixMilli(1786953113005).Format(time.RFC3339)
+	wantWeek := time.UnixMilli(1787539506998).Format(time.RFC3339)
+	if result.PeriodResets[0].Label != "5小时" || result.PeriodResets[0].ResetAt != want5h {
+		t.Errorf("unexpected PeriodResets[0]: %+v (want label 5小时, reset %s)", result.PeriodResets[0], want5h)
+	}
+	if result.PeriodResets[1].Label != "1周" || result.PeriodResets[1].ResetAt != wantWeek {
+		t.Errorf("unexpected PeriodResets[1]: %+v (want label 1周, reset %s)", result.PeriodResets[1], wantWeek)
+	}
+}
+
+func TestGLM_WindowWithoutResetTime_SkippedInPeriodResets(t *testing.T) {
+	// 周窗口缺 nextResetTime → 该窗口不进入 PeriodResets,其余窗口正常
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{
+			"code": 200,
+			"data": {
+				"limits": [
+					{"type": "CREDIT_LIMIT", "unit": 3, "number": 5, "usage": 100, "remaining": 90, "nextResetTime": 1786953113005},
+					{"type": "CREDIT_LIMIT", "unit": 6, "number": 1, "usage": 200, "remaining": 50, "nextResetTime": 0}
+				]
+			},
+			"success": true
+		}`))
+	}))
+	defer server.Close()
+
+	f := NewGLMFetcher("eyJtest", "", "")
+	f.apiURL = server.URL
+	result := f.Fetch()
+	if result.Error != "" {
+		t.Fatalf("unexpected error: %s", result.Error)
+	}
+	if len(result.PeriodResets) != 1 {
+		t.Fatalf("expected 1 PeriodResets (窗口无刷新时间的跳过), got %+v", result.PeriodResets)
+	}
+	if result.PeriodResets[0].Label != "5小时" {
+		t.Errorf("expected PeriodResets[0].Label 5小时, got %q", result.PeriodResets[0].Label)
 	}
 }
 

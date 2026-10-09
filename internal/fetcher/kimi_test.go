@@ -65,6 +65,16 @@ func TestKimiFetcher_NestedResponse_Parses5hWindow(t *testing.T) {
 	if result.ResetAt != "2026-07-17T16:13:12.634389Z" {
 		t.Errorf("expected 5h reset time, got '%s'", result.ResetAt)
 	}
+	// 多周期:5小时 + 周两个窗口的刷新时间均出现在 PeriodResets
+	if len(result.PeriodResets) != 2 {
+		t.Fatalf("expected 2 PeriodResets, got %+v", result.PeriodResets)
+	}
+	if result.PeriodResets[0].Label != "5小时" || result.PeriodResets[0].ResetAt != "2026-07-17T16:13:12.634389Z" {
+		t.Errorf("unexpected PeriodResets[0]: %+v", result.PeriodResets[0])
+	}
+	if result.PeriodResets[1].Label != "周" || result.PeriodResets[1].ResetAt != "2026-07-18T13:13:12.634389Z" {
+		t.Errorf("unexpected PeriodResets[1]: %+v", result.PeriodResets[1])
+	}
 }
 
 func TestKimiFetcher_LegacyArrayResponse_StillParses(t *testing.T) {
@@ -108,6 +118,10 @@ func TestKimiFetcher_LegacyArrayResponse_StillParses(t *testing.T) {
 	}
 	if result.ResetAt != "2026-07-21T00:00:00Z" {
 		t.Errorf("expected ResetAt '2026-07-21T00:00:00Z', got '%s'", result.ResetAt)
+	}
+	// 旧版单周期响应不应填充 PeriodResets
+	if len(result.PeriodResets) != 0 {
+		t.Errorf("expected no PeriodResets for legacy response, got %+v", result.PeriodResets)
 	}
 }
 

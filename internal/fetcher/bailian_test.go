@@ -71,8 +71,39 @@ func TestBailian_OK_BothWindows(t *testing.T) {
 	if result.ResetAt != want {
 		t.Errorf("expected ResetAt %s, got %s", want, result.ResetAt)
 	}
+	// 多周期:5小时 + 周两个窗口的刷新时间均出现在 PeriodResets
+	if len(result.PeriodResets) != 2 {
+		t.Fatalf("expected 2 PeriodResets, got %+v", result.PeriodResets)
+	}
+	if result.PeriodResets[0].Label != "5小时窗口" || result.PeriodResets[0].ResetAt != want {
+		t.Errorf("unexpected PeriodResets[0]: %+v", result.PeriodResets[0])
+	}
+	wantWeek := time.UnixMilli(1789696800000).Format(time.RFC3339)
+	if result.PeriodResets[1].Label != "周窗口" || result.PeriodResets[1].ResetAt != wantWeek {
+		t.Errorf("unexpected PeriodResets[1]: %+v", result.PeriodResets[1])
+	}
 	if result.Platform != "百炼" {
 		t.Errorf("expected Platform 百炼, got %s", result.Platform)
+	}
+}
+
+func TestBailian_MissingResetTime_SkippedInPeriodResets(t *testing.T) {
+	// 5小时窗口(主窗口)缺 ResetTime → ResetAt 为空,且不进入 PeriodResets
+	script := "echo {\"per5HourPercentage\":0.5,\"per1WeekPercentage\":0.1,\"per1WeekResetTime\":1789696800000}"
+	f := NewBailianFetcher(writeFakeCLI(t, script))
+	result := f.Fetch()
+	if result.Error != "" {
+		t.Fatalf("unexpected error: %s", result.Error)
+	}
+	if result.ResetAt != "" {
+		t.Errorf("expected empty ResetAt (主窗口无刷新时间), got %q", result.ResetAt)
+	}
+	if len(result.PeriodResets) != 1 || result.PeriodResets[0].Label != "周窗口" {
+		t.Fatalf("expected 1 PeriodResets (周窗口), got %+v", result.PeriodResets)
+	}
+	want := time.UnixMilli(1789696800000).Format(time.RFC3339)
+	if result.PeriodResets[0].ResetAt != want {
+		t.Errorf("expected PeriodResets[0].ResetAt %s, got %s", want, result.PeriodResets[0].ResetAt)
 	}
 }
 
@@ -91,6 +122,10 @@ func TestBailian_OK_OnlyWeek(t *testing.T) {
 	}
 	if result.ResetAt == "" {
 		t.Error("expected ResetAt set")
+	}
+	// 单窗口也填充 PeriodResets(前端按周期标签展示)
+	if len(result.PeriodResets) != 1 || result.PeriodResets[0].Label != "周窗口" {
+		t.Errorf("expected 1 PeriodResets (周窗口), got %+v", result.PeriodResets)
 	}
 }
 

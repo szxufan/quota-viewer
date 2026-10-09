@@ -24,6 +24,9 @@ type QuotaResult struct {            // internal/fetcher/types.go
     Percent     float64   `json:"percent"`     // Used/Total*100; 无总量时由剩余百分比反推
     Remaining   string    `json:"remaining"`   // 原始剩余描述（如 "1,200/18,000 次"）
     ResetAt     string    `json:"reset_at"`    // 下次重置时间 ISO8601，空则未知
+    // 多周期渠道(Kimi/GLM/百炼/OpenCode Go)各周期刷新时间;
+    // 空 = 单周期渠道,前端详情页仅按 ResetAt 展示一行倒计时
+    PeriodResets []PeriodReset `json:"period_resets,omitempty"` // [{label, reset_at}]
     LastUpdated time.Time `json:"last_updated"`
     Error       string    `json:"error"`       // 非空表示失败
 }

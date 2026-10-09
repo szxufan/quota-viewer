@@ -10,6 +10,12 @@ const (
 	KindBalance = "balance"
 )
 
+// PeriodReset 多周期渠道的单个周期刷新时间(前端额度详情逐条展示倒计时)。
+type PeriodReset struct {
+	Label   string `json:"label"`    // 周期名("5小时窗口" / "周窗口" / ...)
+	ResetAt string `json:"reset_at"` // 该周期的下次重置时间(ISO 8601)
+}
+
 // QuotaResult 是所有 fetcher 的统一返回结构。
 type QuotaResult struct {
 	Platform    string    `json:"platform"`  // 展示名("Kimi" / "讯飞星辰" / ...)
@@ -25,7 +31,10 @@ type QuotaResult struct {
 	Currency    string    `json:"currency"`  // 余额货币代码(如 "CNY" / "USD")
 	Remaining   string    `json:"remaining"` // 原始剩余描述(如 "1,200/18,000 次" 或 "无限制")
 	ResetAt     string    `json:"reset_at"`  // 下次重置时间(ISO 8601,空则未知)
-	LastUpdated time.Time `json:"last_updated"`
+	// PeriodResets 多周期渠道(如 Kimi/GLM/百炼/OpenCode Go)各周期的刷新时间;
+	// 空 = 单周期渠道,前端仅按 ResetAt 展示一行倒计时。
+	PeriodResets []PeriodReset `json:"period_resets,omitempty"`
+	LastUpdated  time.Time     `json:"last_updated"`
 	Error       string    `json:"error"` // 非空表示失败
 
 	// UpdatedCreds 本次抓取产生的、应写回配置的新凭证(字段 key → 新值);空 = 无更新。

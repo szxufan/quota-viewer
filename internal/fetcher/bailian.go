@@ -96,6 +96,13 @@ func (f *BailianFetcher) Fetch() QuotaResult {
 	if best.resetMs != nil && *best.resetMs > 0 {
 		result.ResetAt = time.UnixMilli(*best.resetMs).Format(time.RFC3339)
 	}
+	// 多周期:各窗口刷新时间逐条展示(缺失刷新时间的窗口跳过)
+	for _, w := range windows {
+		if w.resetMs == nil || *w.resetMs <= 0 {
+			continue
+		}
+		result.PeriodResets = append(result.PeriodResets, PeriodReset{Label: w.label, ResetAt: time.UnixMilli(*w.resetMs).Format(time.RFC3339)})
+	}
 	var lines []string
 	for _, w := range windows {
 		lines = append(lines, fmt.Sprintf("%.1f%% 已用 (%s)", w.pct*100, w.label))

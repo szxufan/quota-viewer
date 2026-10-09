@@ -130,6 +130,8 @@ func (f *YourPlatformFetcher) Fetch() QuotaResult {
 
 用量型不设 `Kind` 字段（零值 `""` 即可，前端按 usage 处理）。余额型必须在 `QuotaResult` 初始化时设 `Kind: KindBalance`。
 
+多周期渠道（平台同时有多个限流窗口，如 5 小时 + 周）除 `ResetAt`（主窗口刷新时间）外，还应填充 `PeriodResets`（`[]PeriodReset{Label, ResetAt}`），额度详情页会逐周期展示倒计时（宽度足够时同行排列，不足时自动换行）；参考 `kimi.go` / `glm.go` / `bailian.go` / `opencode_go.go`。
+
 ### 1.4 Cookie 类凭证
 
 如果平台用 Cookie 认证（如讯飞、MiMo），参考 `xfyun.go`：
