@@ -18,10 +18,10 @@ func TestParseAliyunPackageTypes(t *testing.T) {
 		{"", nil},
 		{"  ", nil},
 		{"ots", []string{"ots"}},
-		{"cdt,ots", []string{"ots", "cdt"}},           // 归一为固定顺序
+		{"cdt,ots", []string{"ots", "cdt"}}, // 归一为固定顺序
 		{"ots,ots,flowbag", []string{"ots", "flowbag"}}, // 去重
 		{" ots , flowbag ", []string{"ots", "flowbag"}}, // 去空白
-		{"unknown,ots", []string{"ots"}},               // 过滤未知值
+		{"unknown,ots", []string{"ots"}},                // 过滤未知值
 		{"unknown", nil},
 	}
 	for _, c := range cases {
@@ -93,22 +93,22 @@ func TestAliyunFetcher_FetchMulti_NoCreds_OnlyBalanceError(t *testing.T) {
 func TestAliyunFetcher_FetchMulti_WithTypes_Aggregates(t *testing.T) {
 	instances := `{
 		"InstanceId": "PK-cn-1", "TotalAmount": "100000000", "RemainingAmount": "39448283",
-		"CommodityCode": "otsbag", "DeductType": "PeriodMonthlyAcc"
+		"CommodityCode": "otsbag", "DeductType": "PeriodMonthlyAcc", "ExpiryTime": "2099-01-01T00:00:00Z"
 	},{
 		"InstanceId": "PK-cn-2", "TotalAmount": "50000000", "RemainingAmount": "50000000",
 		"CommodityCode": "otsbag", "DeductType": "PeriodMonthlyAcc"
 	},{
 		"InstanceId": "PK-cn-3", "TotalAmount": "20000000", "RemainingAmount": "0",
-		"CommodityCode": "otsbag", "DeductType": "PeriodMonthlyAcc"
+		"CommodityCode": "otsbag", "DeductType": "PeriodMonthlyAcc", "ExpiryTime": "2099-01-01T00:00:00Z"
 	},{
 		"InstanceId": "flowpack-cn-1", "TotalAmount": "1000", "RemainingAmount": "620.5",
-		"CommodityCode": "flowbag", "DeductType": "DeadlineAcc"
+		"CommodityCode": "flowbag", "DeductType": "DeadlineAcc", "ExpiryTime": "2099-06-01T00:00:00Z"
 	},{
 		"InstanceId": "flowpack-cn-2", "TotalAmount": "200", "RemainingAmount": "0",
-		"CommodityCode": "flowbag", "DeductType": "DeadlineAcc"
+		"CommodityCode": "flowbag", "DeductType": "DeadlineAcc", "ExpiryTime": "2099-05-01T00:00:00Z"
 	},{
 		"InstanceId": "ossbag-cn-1", "TotalAmount": "500", "RemainingAmount": "500",
-		"CommodityCode": "ossbag", "DeductType": "DeadlineAcc"
+		"CommodityCode": "ossbag", "DeductType": "DeadlineAcc", "ExpiryTime": "2099-01-01T00:00:00Z"
 	}`
 	page := `{"Code":"200","Success":true,"Data":{"TotalCount":6,"Instances":{"Instance":[` + instances + `]}}}`
 	server := aliyunMultiTestServer(t, map[string]string{"1": page})
@@ -145,10 +145,15 @@ func TestAliyunFetcher_FetchMulti_WithTypes_Aggregates(t *testing.T) {
 	if !strings.Contains(ots.Remaining, "8944.8万/1.5亿 CU·2包") {
 		t.Errorf("ots Remaining = %q, want contain '8944.8万/1.5亿 CU·2包'", ots.Remaining)
 	}
-	if ots.ResetAt == "" {
-		t.Error("expected ResetAt for monthly package")
-	} else if _, err := time.Parse(time.RFC3339, ots.ResetAt); err != nil {
+	// 月周期包:过期时间(2099)晚于下月 1 日,取月度刷新
+	if ots.ResetKind != "" {
+		t.Errorf("ots ResetKind = %q, want refresh(空)", ots.ResetKind)
+	}
+	got, err := time.Parse(time.RFC3339, ots.ResetAt)
+	if err != nil {
 		t.Errorf("ResetAt not RFC3339: %q", ots.ResetAt)
+	} else if !got.Equal(nextMonthStart(time.Now())) {
+		t.Errorf("ots ResetAt = %v, want next month start %v", got, nextMonthStart(time.Now()))
 	}
 
 	flow := results[2]
@@ -162,14 +167,118 @@ func TestAliyunFetcher_FetchMulti_WithTypes_Aggregates(t *testing.T) {
 	if !strings.Contains(flow.Remaining, "GB·1包") {
 		t.Errorf("flow Remaining = %q, want contain 'GB·1包'", flow.Remaining)
 	}
-	if flow.ResetAt != "" {
-		t.Errorf("DeadlineAcc should have no ResetAt, got %q", flow.ResetAt)
+	// DeadlineAcc 无月度刷新:取生效实例的过期时间;
+	// 已用完实例(2099-05-01,更早)与其它商品实例(ossbag)都不参与
+	if flow.ResetKind != "expire" {
+		t.Errorf("flow ResetKind = %q, want expire", flow.ResetKind)
+	}
+	got, err = time.Parse(time.RFC3339, flow.ResetAt)
+	if err != nil {
+		t.Errorf("flow ResetAt not RFC3339: %q", flow.ResetAt)
+	} else if want := time.Date(2099, 6, 1, 0, 0, 0, 0, time.UTC); !got.Equal(want) {
+		t.Errorf("flow ResetAt = %v, want %v", got, want)
 	}
 
 	cdt := results[3]
 	if cdt.Remaining != "无生效中资源包" || cdt.Total != 0 || cdt.Percent != 0 {
 		t.Errorf("cdt empty case wrong: %+v", cdt)
 	}
+	if cdt.ResetAt != "" {
+		t.Errorf("cdt ResetAt = %q, want empty", cdt.ResetAt)
+	}
+}
+
+// TestBuildAliyunPackageResult_NearestResetOrExpiry 刷新时间取计入聚合的
+// 实例中最近的未来事件:月周期包为下月 1 日刷新,其余为实例过期时间。
+func TestBuildAliyunPackageResult_NearestResetOrExpiry(t *testing.T) {
+	now := time.Now()
+	nextMonth := nextMonthStart(now)
+	soon := now.Add(time.Hour).Truncate(time.Second).UTC().Format(time.RFC3339)
+	soonWant := now.Add(time.Hour).Truncate(time.Second)
+	flow := aliyunPackageTypes[1] // 共享流量包(flowbag)
+
+	t.Run("月度刷新早于过期时间,取刷新", func(t *testing.T) {
+		instances := []aliyunPkgInstance{
+			{CommodityCode: "flowbag", TotalAmount: "100", RemainingAmount: "50",
+				DeductType: "PeriodMonthlyAcc", ExpiryTime: "2099-01-01T00:00:00Z"},
+		}
+		r := buildAliyunPackageResult(flow, instances)
+		if r.ResetKind != "" {
+			t.Errorf("ResetKind = %q, want refresh(空)", r.ResetKind)
+		}
+		if got, err := time.Parse(time.RFC3339, r.ResetAt); err != nil || !got.Equal(nextMonth) {
+			t.Errorf("ResetAt = %q (err=%v), want %v", r.ResetAt, err, nextMonth)
+		}
+	})
+
+	t.Run("过期时间早于月度刷新,取过期", func(t *testing.T) {
+		instances := []aliyunPkgInstance{
+			{CommodityCode: "flowbag", TotalAmount: "100", RemainingAmount: "50",
+				DeductType: "PeriodMonthlyAcc", ExpiryTime: soon},
+		}
+		r := buildAliyunPackageResult(flow, instances)
+		if r.ResetKind != "expire" {
+			t.Errorf("ResetKind = %q, want expire", r.ResetKind)
+		}
+		if got, err := time.Parse(time.RFC3339, r.ResetAt); err != nil || !got.Equal(soonWant) {
+			t.Errorf("ResetAt = %q (err=%v), want %v", r.ResetAt, err, soonWant)
+		}
+	})
+
+	t.Run("多个实例取最早过期", func(t *testing.T) {
+		instances := []aliyunPkgInstance{
+			{CommodityCode: "flowbag", TotalAmount: "100", RemainingAmount: "50",
+				DeductType: "DeadlineAcc", ExpiryTime: "2099-06-01T00:00:00Z"},
+			{CommodityCode: "flowbag", TotalAmount: "100", RemainingAmount: "50",
+				DeductType: "DeadlineAcc", ExpiryTime: "2099-03-01T00:00:00Z"},
+		}
+		r := buildAliyunPackageResult(flow, instances)
+		if got, err := time.Parse(time.RFC3339, r.ResetAt); err != nil {
+			t.Errorf("ResetAt not RFC3339: %q", r.ResetAt)
+		} else if want := time.Date(2099, 3, 1, 0, 0, 0, 0, time.UTC); !got.Equal(want) {
+			t.Errorf("ResetAt = %v, want earliest %v", got, want)
+		}
+	})
+
+	t.Run("已用完实例的过期时间不参与", func(t *testing.T) {
+		instances := []aliyunPkgInstance{
+			{CommodityCode: "flowbag", TotalAmount: "1000", RemainingAmount: "400",
+				DeductType: "DeadlineAcc", ExpiryTime: "2099-06-01T00:00:00Z"},
+			{CommodityCode: "flowbag", TotalAmount: "500", RemainingAmount: "0",
+				DeductType: "DeadlineAcc", ExpiryTime: "2099-05-01T00:00:00Z"},
+		}
+		r := buildAliyunPackageResult(flow, instances)
+		if got, err := time.Parse(time.RFC3339, r.ResetAt); err != nil {
+			t.Errorf("ResetAt not RFC3339: %q", r.ResetAt)
+		} else if want := time.Date(2099, 6, 1, 0, 0, 0, 0, time.UTC); !got.Equal(want) {
+			t.Errorf("ResetAt = %v, want %v (exhausted instance's earlier expiry ignored)", got, want)
+		}
+	})
+
+	t.Run("全部用完回退计入时取其过期时间", func(t *testing.T) {
+		instances := []aliyunPkgInstance{
+			{CommodityCode: "flowbag", TotalAmount: "1000", RemainingAmount: "0",
+				DeductType: "DeadlineAcc", ExpiryTime: soon},
+		}
+		r := buildAliyunPackageResult(flow, instances)
+		if r.ResetKind != "expire" {
+			t.Errorf("ResetKind = %q, want expire", r.ResetKind)
+		}
+		if got, err := time.Parse(time.RFC3339, r.ResetAt); err != nil || !got.Equal(soonWant) {
+			t.Errorf("ResetAt = %q (err=%v), want %v", r.ResetAt, err, soonWant)
+		}
+	})
+
+	t.Run("仅过去时间则无刷新时间", func(t *testing.T) {
+		instances := []aliyunPkgInstance{
+			{CommodityCode: "flowbag", TotalAmount: "100", RemainingAmount: "50",
+				DeductType: "DeadlineAcc", ExpiryTime: "2000-01-01T00:00:00Z"},
+		}
+		r := buildAliyunPackageResult(flow, instances)
+		if r.ResetAt != "" || r.ResetKind != "" {
+			t.Errorf("past expiry should yield no reset, got ResetAt=%q ResetKind=%q", r.ResetAt, r.ResetKind)
+		}
+	})
 }
 
 func TestAliyunFetcher_FetchMulti_Pagination(t *testing.T) {

@@ -59,13 +59,15 @@ func ParseAliyunPackageTypes(s string) []string {
 }
 
 // aliyunPkgInstance 是 QueryResourcePackageInstances 返回的单个资源包实例(仅取用到的字段)。
-// TotalAmount/RemainingAmount 为数字字符串(如 "100000000")。
+// TotalAmount/RemainingAmount 为数字字符串(如 "100000000");
+// ExpiryTime 为失效时间(UTC ISO8601,如 "2026-09-29T05:00:00Z")。
 type aliyunPkgInstance struct {
 	InstanceId      string `json:"InstanceId"`
 	TotalAmount     string `json:"TotalAmount"`
 	RemainingAmount string `json:"RemainingAmount"`
 	CommodityCode   string `json:"CommodityCode"`
 	DeductType      string `json:"DeductType"` // Absolute / DeadlineAcc / PeriodMonthlyAcc / ...
+	ExpiryTime      string `json:"ExpiryTime"` // 失效时间(UTC ISO8601;空 = 接口未返回)
 }
 
 // aliyunPkgResponse 是 QueryResourcePackageInstances 的响应(2017-12-14 版,含信封)。
@@ -148,7 +150,8 @@ func (f *AliyunFetcher) fetchPackageInstances() ([]aliyunPkgInstance, error) {
 // 总量/剩余求和,已用 = 总量 - 剩余;无实例时返回提示文案。
 // 已用完(剩余量为 0)的实例不计入聚合,避免失效包稀释进度条;
 // 但若该类型下全部实例都已用完,则仍然计入以展示用尽状态。
-// 自然月周期型包(PeriodMonthlyAcc)按月重置额度,ResetAt 取下月 1 日。
+// 刷新时间取计入聚合的实例中最近的未来事件(ResetKind 标记语义):
+// 自然月周期包(PeriodMonthlyAcc)为下月 1 日刷新,所有实例为 ExpiryTime 过期。
 func buildAliyunPackageResult(t aliyunPackageType, instances []aliyunPkgInstance) QuotaResult {
 	r := QuotaResult{
 		Platform:    "阿里云资源包",
@@ -158,12 +161,33 @@ func buildAliyunPackageResult(t aliyunPackageType, instances []aliyunPkgInstance
 		KeyName:     t.Label,
 		LastUpdated: time.Now(),
 	}
+	now := time.Now()
 
 	var total, remaining float64
 	var count int
 	var exhaustedTotal float64
 	var exhaustedCount int
-	monthly := false
+	var exhaustedIns []aliyunPkgInstance // 暂存已用完实例,全部用完回退计入时补记其事件
+	var nearest time.Time                // 最近的未来刷新/过期事件
+	nearestIsExpiry := false
+	// consider 记录一个候选事件:仅取未来时间,保留最早的一个。
+	consider := func(candidate time.Time, isExpiry bool) {
+		if !candidate.After(now) {
+			return
+		}
+		if nearest.IsZero() || candidate.Before(nearest) {
+			nearest, nearestIsExpiry = candidate, isExpiry
+		}
+	}
+	// considerInstance 记录单个实例的事件候选:月周期包有下月刷新,所有实例都可能过期。
+	considerInstance := func(ins aliyunPkgInstance) {
+		if ins.DeductType == "PeriodMonthlyAcc" {
+			consider(nextMonthStart(now), false)
+		}
+		if et, err := time.Parse(time.RFC3339, ins.ExpiryTime); err == nil {
+			consider(et, true)
+		}
+	}
 	for _, ins := range instances {
 		if ins.CommodityCode != t.CommodityCode {
 			continue
@@ -177,20 +201,22 @@ func buildAliyunPackageResult(t aliyunPackageType, instances []aliyunPkgInstance
 			// 已用完的实例先单独记账,仅当没有剩余实例时才计入
 			exhaustedTotal += tv
 			exhaustedCount++
+			exhaustedIns = append(exhaustedIns, ins)
 			continue
 		}
 		total += tv
 		remaining += rv
 		count++
-		if ins.DeductType == "PeriodMonthlyAcc" {
-			monthly = true
-		}
+		considerInstance(ins)
 	}
 
 	if count == 0 && exhaustedCount > 0 {
 		// 全部已用完:仍然计入,展示用尽状态(进度条 100%)
 		total = exhaustedTotal
 		count = exhaustedCount
+		for _, ins := range exhaustedIns {
+			considerInstance(ins)
+		}
 	}
 	if count == 0 {
 		r.Remaining = "无生效中资源包"
@@ -208,8 +234,11 @@ func buildAliyunPackageResult(t aliyunPackageType, instances []aliyunPkgInstance
 	}
 	r.Remaining = fmt.Sprintf("%s/%s %s·%d包",
 		formatAliyunAmount(remaining), formatAliyunAmount(total), t.Unit, count)
-	if monthly {
-		r.ResetAt = nextMonthStart(time.Now()).Format(time.RFC3339)
+	if !nearest.IsZero() {
+		r.ResetAt = nearest.Local().Format(time.RFC3339)
+		if nearestIsExpiry {
+			r.ResetKind = "expire"
+		}
 	}
 	return r
 }

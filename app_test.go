@@ -218,6 +218,68 @@ func TestSaveConfig_SyncExcludesRoundTrip(t *testing.T) {
 	}
 }
 
+// TestFetchAll_CredAsSite 凭证即站点渠道(New API)的展示顶替:
+// 有凭证名时以凭证名/缩写代替平台名/球格缩写;缩写未配置取凭证名前两字;
+// 未命名凭证与其它渠道保持 "New API"/"NA" 默认。
+func TestFetchAll_CredAsSite(t *testing.T) {
+	t.Setenv("APPDATA", t.TempDir())
+
+	a := &App{cfg: config.Default()}
+	// Default 只注册早期 5 渠道,new-api 需手动追加(与 SaveConfig 首次保存行为一致)
+	a.cfg.Providers = append(a.cfg.Providers, config.ProviderConfig{
+		ID:       "new-api",
+		Enabled:  true,
+		// 空 creds:Fetch 走参数校验快速返回错误,不发起网络请求
+		Keys:     []map[string]string{{}, {}, {}},
+		KeyNames: []string{"工作号", "AB 站", ""},
+		KeyAbbrs: []string{"", "GW", ""},
+	})
+
+	results := a.fetchAll()
+	byKey := map[int]fetcher.QuotaResult{}
+	for _, r := range results {
+		if r.ID == "new-api" {
+			byKey[r.KeyIndex] = r
+		}
+	}
+	if len(byKey) != 3 {
+		t.Fatalf("期望 3 条 new-api 结果, got %d", len(byKey))
+	}
+
+	cases := []struct {
+		idx      int
+		platform string
+		abbr     string
+	}{
+		{0, "工作号", "工作"}, // 缩写留空 → 取名称前两字
+		{1, "AB 站", "GW"}, // 显式配置缩写优先
+		{2, "New API", "NA"}, // 未命名凭证回退默认
+	}
+	for _, c := range cases {
+		r, ok := byKey[c.idx]
+		if !ok {
+			t.Fatalf("缺少 key_index=%d 的结果", c.idx)
+		}
+		if r.Platform != c.platform || r.Abbr != c.abbr {
+			t.Errorf("组 %d: platform=%q abbr=%q, want %q/%q", c.idx, r.Platform, r.Abbr, c.platform, c.abbr)
+		}
+	}
+
+	// GetConfig 下发缩写与凭证即站点标记
+	for _, p := range a.GetConfig()["providers"].([]map[string]interface{}) {
+		if p["id"] != "new-api" {
+			continue
+		}
+		if v, _ := p["cred_as_site"].(bool); !v {
+			t.Errorf("下发 cred_as_site = %v, 应为 true", p["cred_as_site"])
+		}
+		abbrs, _ := p["key_abbrs"].([]string)
+		if len(abbrs) != 3 || abbrs[1] != "GW" {
+			t.Errorf("下发 key_abbrs = %v, 应为 3 个元素且 [1]=GW", p["key_abbrs"])
+		}
+	}
+}
+
 // TestStartAutoRefresh_Restart 自动刷新循环可重启:
 // 再次调用时旧 stop 通道被关闭(旧 goroutine 退出)、生成新通道。
 func TestStartAutoRefresh_Restart(t *testing.T) {

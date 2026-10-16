@@ -44,6 +44,7 @@ type ProviderConfig struct {
 	Creds        map[string]string   `json:"creds,omitempty"`         // 旧版单凭证(兼容读取;保存后统一升级为 Keys)
 	Keys         []map[string]string `json:"keys,omitempty"`          // 多组凭证(每组一套字段值);空 = 未配置多 key
 	KeyNames     []string            `json:"key_names,omitempty"`     // 各凭证组的显示名(与 Keys 对齐;空 = 详情页回退 "Key N")
+	KeyAbbrs     []string            `json:"key_abbrs,omitempty"`     // 各凭证组的球格缩写(与 Keys 对齐;凭证即站点渠道生效,空 = 取凭证名前两字)
 	Budget       float64             `json:"budget,omitempty"`        // 旧版渠道级预算(已废弃;Load 时迁移到 Budgets)
 	Budgets      []float64           `json:"budgets,omitempty"`       // 各凭证组的预算(与 Keys 对齐;0 = 该组未设)
 	LastBalances []float64           `json:"last_balances,omitempty"` // 各凭证组上次抓取到的余额(充值检测基线)

@@ -193,6 +193,7 @@ if resp.StatusCode == 401 || resp.StatusCode == 302 {
 | `DisplayName` | 配置面板和 tooltip 展示名 | 与 `Fetch()` 返回的 `Platform` 字段一致 |
 | `Abbr` | 球格内显示的缩写字母 | 1-2 字符（如 `K` / `讯` / `Go`） |
 | `LoginURL` | 配置面板"打开登录页"按钮的 URL | 空字符串 = 不显示按钮 |
+| `CredAsSite` | 凭证即站点渠道标记：有凭证名时以凭证名/缩写代替平台名/球格缩写展示，详情页按凭证逐条成组 | 仅适用于每个凭证是独立站点的渠道（如 New API） |
 | `Fields` | 凭证字段定义，驱动前端动态生成输入框 | 每个字段有 `Key` / `Label` / `Type` |
 | `Build` | 工厂函数，从 `map[string]string` 构造 Fetcher | Key 与 Fields 中的 `Key` 对应 |
 

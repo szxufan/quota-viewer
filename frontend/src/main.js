@@ -128,11 +128,14 @@ function renderResults(results) {
     const list = document.getElementById("quota-list");
     list.innerHTML = "";
 
-    // 按 provider id 分组,组内按 key_index 排序
+    // 按 provider id 分组,组内按 key_index 排序。
+    // 凭证即站点渠道(如 New API,平台名被凭证名顶替)每个凭证独立成组,凭证名作组头
     const groups = new Map();
     results.forEach((r) => {
-        if (!groups.has(r.id)) groups.set(r.id, []);
-        groups.get(r.id).push(r);
+        const own = r.key_name && r.key_name === r.platform;
+        const gk = own ? r.id + ":" + r.key_index : r.id;
+        if (!groups.has(gk)) groups.set(gk, []);
+        groups.get(gk).push(r);
     });
 
     let idx = 0;
@@ -168,8 +171,11 @@ function renderResults(results) {
             const percent = r.error ? 0 : r.percent || 0;
             // 多周期渠道逐周期一行倒计时,单周期/无刷新时间由 buildResetHtml 内部回退
             const resetHtml = buildResetHtml(r);
-            // 优先显示配置的凭证名,否则多 key 时回退 "Key N"(单 key 留空)
-            const keyLabel = r.key_name || (items.length > 1 ? "Key " + (ki + 1) : "");
+            // 优先显示配置的凭证名,否则多 key 时回退 "Key N"(单 key 留空);
+            // 凭证名已作组头(凭证=平台名,如 New API)时不再重复标注
+            const keyLabel = (r.key_name && r.key_name === r.platform)
+                ? ""
+                : (r.key_name || (items.length > 1 ? "Key " + (ki + 1) : ""));
             const cell = document.createElement("div");
             cell.className = "quota-key-cell";
             cell.innerHTML = `
@@ -217,7 +223,8 @@ function updateCountdowns() {
     document.querySelectorAll(".quota-reset").forEach((el) => {
         const resetAt = el.getAttribute("data-reset-at");
         const label = el.getAttribute("data-period-label") || "";
-        const text = formatCountdown(resetAt, label);
+        const kind = el.getAttribute("data-reset-kind") || "";
+        const text = formatCountdown(resetAt, label, Date.now(), kind);
         if (text) el.textContent = text;
     });
 }
@@ -276,8 +283,14 @@ function updateBall(results) {
         });
     }
 
+    // 悬停 tooltip:凭证名与平台名相同(凭证即站点渠道)时不再重复拼接
     ball.title = results
-        .map((r) => r.platform + (r.key_name || (r.key_index > 0 ? " Key " + (r.key_index + 1) : "")) + ": " + (r.error || r.remaining || "未知"))
+        .map((r) => {
+            const label = r.key_name
+                ? (r.key_name !== r.platform ? r.key_name : "")
+                : (r.key_index > 0 ? " Key " + (r.key_index + 1) : "");
+            return r.platform + label + ": " + (r.error || r.remaining || "未知");
+        })
         .join("\n");
 
     // 仅在收起态调整窗口尺寸,避免覆盖展开面板(展开期间只记 pendingBallSize)
@@ -484,9 +497,11 @@ function collectProviders() {
             return creds;
         });
         const keyNames = groups.map((g) => (g.nameInput ? g.nameInput.value.trim() : ""));
+        // 每个凭证组的球格缩写与 keys 对齐(空 = 取凭证名前两字;仅凭证即站点渠道生效)
+        const keyAbbrs = groups.map((g) => (g.abbrInput ? g.abbrInput.value.trim() : ""));
         // 每个凭证组的预算与 keys 对齐(0 = 未设);旧渠道级单一预算已废弃
         const budgets = groups.map((g) => (g.budget ? parseFloat(g.budget.value) || 0 : 0));
-        const provider = { id: c.id, enabled: c.enabled.checked, keys, keyNames, budgets };
+        const provider = { id: c.id, enabled: c.enabled.checked, keys, keyNames, keyAbbrs, budgets };
         // 同步排除开关仅发布模式渲染;未渲染时省略该字段,后端保留已存值不被清空
         if (groups.some((g) => g.syncExclude)) {
             provider.sync_excludes = groups.map((g) => (g.syncExclude ? !g.syncExclude.checked : false));
@@ -554,7 +569,7 @@ function renderProviderList(providers) {
         const budgets = p.budgets || [];
         const syncExcludes = p.sync_excludes || [];
         savedKeys.forEach((k, i) => {
-            cardObj.groups.push(renderCredGroup(cardObj, k, (p.key_names || [])[i] || "", budgets[i] || 0, syncExcludes[i] || false));
+            cardObj.groups.push(renderCredGroup(cardObj, k, (p.key_names || [])[i] || "", (p.key_abbrs || [])[i] || "", budgets[i] || 0, syncExcludes[i] || false));
         });
         refreshCredTabs(cardObj);
 
@@ -612,10 +627,11 @@ function selectProvider(id) {
 
 // 渲染一组凭证页(按注册表元数据生成,placeholder 显示掩码值);
 // 组首为可选的显示名输入(实时同步凭证标签文案,详情页用其代替 "Key N");
+// 凭证即站点渠道(cred_as_site)另有可选的球格缩写输入(空 = 取名称前两字);
 // 组尾带"删除此凭证"按钮(组数 >1 时显示)。
 // 发布模式下每组带"同步到 OSS"开关(syncExcluded = 已存排除标记,默认勾选 = 同步)。
-// 返回组对象 {fields:[{key,input}], nameInput, budget(input|null), syncExclude(checkbox|null), page}。
-function renderCredGroup(cardObj, creds, name, budget, syncExcluded) {
+// 返回组对象 {fields:[{key,input}], nameInput, abbrInput, budget(input|null), syncExclude(checkbox|null), page}。
+function renderCredGroup(cardObj, creds, name, abbr, budget, syncExcluded) {
     const p = cardObj.def;
     const page = document.createElement("div");
     page.className = "provider-group cred-page";
@@ -633,6 +649,22 @@ function renderCredGroup(cardObj, creds, name, budget, syncExcluded) {
     nameInput.addEventListener("input", () => refreshCredTabs(cardObj));
     nameGroup.append(nameLabel, nameInput);
     page.appendChild(nameGroup);
+
+    // 球格缩写(可选,仅凭证即站点渠道显示):该凭证在悬浮球上的缩写
+    let abbrInput = null;
+    if (p.cred_as_site) {
+        const abbrGroup = document.createElement("div");
+        abbrGroup.className = "form-group";
+        const abbrLabel = document.createElement("label");
+        abbrLabel.textContent = "缩写(可选)";
+        abbrInput = document.createElement("input");
+        abbrInput.type = "text";
+        abbrInput.className = "provider-group-abbr";
+        abbrInput.placeholder = "球格缩写,如 GW;留空取名称前两字";
+        if (abbr) abbrInput.value = abbr;
+        abbrGroup.append(abbrLabel, abbrInput);
+        page.appendChild(abbrGroup);
+    }
 
     const fieldsWrap = document.createElement("div");
     fieldsWrap.className = "provider-fields";
@@ -716,7 +748,7 @@ function renderCredGroup(cardObj, creds, name, budget, syncExcluded) {
         page.appendChild(row);
     }
 
-    const g = { fields, nameInput, budget: budgetInput, syncExclude: syncExcludeInput, page };
+    const g = { fields, nameInput, abbrInput, budget: budgetInput, syncExclude: syncExcludeInput, page };
     const del = document.createElement("button");
     del.className = "btn-sm del-cred";
     del.textContent = "删除此凭证";
@@ -780,7 +812,7 @@ function refreshCredTabs(cardObj) {
     add.textContent = "+";
     add.title = "添加凭证";
     add.addEventListener("click", () => {
-        cardObj.groups.push(renderCredGroup(cardObj, {}, "", 0, false));
+        cardObj.groups.push(renderCredGroup(cardObj, {}, "", "", 0, false));
         refreshCredTabs(cardObj);
         setActiveCred(cardObj, cardObj.groups.length - 1); // 切到新页
         updateProviderBadge(cardObj);

@@ -28,7 +28,10 @@ type ProviderDef struct {
 	// Credentialless 免凭证 Provider(凭证存于外部工具,如百炼 CLI 全局登录态):
 	// 启用即可用,前端徽标不按"凭证组非空"判定,fetchAll 为其创建空凭证组任务。
 	Credentialless bool
-	Fields         []CredentialField
+	// CredAsSite 凭证即站点渠道(如 New API 中转站):每个凭证组是一个独立站点,
+	// 有凭证名时以凭证名/缩写代替平台名/球格缩写展示,详情页按凭证逐条成组。
+	CredAsSite bool
+	Fields     []CredentialField
 	Build          func(creds map[string]string) Fetcher
 }
 
@@ -130,6 +133,38 @@ var registry = []ProviderDef{
 		},
 	},
 	{
+		ID:          "bailian",
+		DisplayName: "百炼",
+		Abbr:        "BL",
+		Kind:        KindUsage,
+		LoginURL:    "https://bailian.console.aliyun.com/cn-beijing?tab=plan#/efm/subscription/overview",
+		// 凭证由 bl CLI 全局登录管理,启用即可用,无需在应用内配置
+		Credentialless: true,
+		Fields: []CredentialField{
+			{Key: "cli_path", Label: "bl 命令路径(可选,默认 PATH 查找;凭证由 bl CLI 全局登录管理,请勿配置多组)", Type: "text", Plain: true},
+		},
+		Build: func(creds map[string]string) Fetcher {
+			return NewBailianFetcher(creds["cli_path"])
+		},
+	},
+	{
+		ID:          "new-api",
+		DisplayName: "New API",
+		Abbr:        "NA",
+		Kind:        KindUsage,
+		// 每个凭证即一个独立中转站,以凭证名/缩写代替 "New API"/"NA" 展示
+		CredAsSite: true,
+		Fields: []CredentialField{
+			{Key: "base_url", Label: "BaseUrl", Type: "text", Plain: true},
+			{Key: "channel_id", Label: "channel_id", Type: "text", Plain: true},
+			{Key: "user", Label: "User(请求头 New-Api-User)", Type: "text", Plain: true},
+			{Key: "authorization", Label: "Authorization(请求头原值)", Type: "password"},
+		},
+		Build: func(creds map[string]string) Fetcher {
+			return NewNewAPIFetcher(creds["base_url"], creds["channel_id"], creds["user"], creds["authorization"])
+		},
+	},
+	{
 		ID:          "aliyun",
 		DisplayName: "阿里云",
 		Abbr:        "AL",
@@ -152,36 +187,6 @@ var registry = []ProviderDef{
 			f := NewAliyunFetcher(creds["access_key_id"], creds["access_key_secret"])
 			f.packageTypes = ParseAliyunPackageTypes(creds["package_types"])
 			return f
-		},
-	},
-	{
-		ID:          "bailian",
-		DisplayName: "百炼",
-		Abbr:        "BL",
-		Kind:        KindUsage,
-		LoginURL:    "https://bailian.console.aliyun.com/cn-beijing?tab=plan#/efm/subscription/overview",
-		// 凭证由 bl CLI 全局登录管理,启用即可用,无需在应用内配置
-		Credentialless: true,
-		Fields: []CredentialField{
-			{Key: "cli_path", Label: "bl 命令路径(可选,默认 PATH 查找;凭证由 bl CLI 全局登录管理,请勿配置多组)", Type: "text", Plain: true},
-		},
-		Build: func(creds map[string]string) Fetcher {
-			return NewBailianFetcher(creds["cli_path"])
-		},
-	},
-	{
-		ID:          "new-api",
-		DisplayName: "New API",
-		Abbr:        "NA",
-		Kind:        KindUsage,
-		Fields: []CredentialField{
-			{Key: "base_url", Label: "BaseUrl", Type: "text", Plain: true},
-			{Key: "channel_id", Label: "channel_id", Type: "text", Plain: true},
-			{Key: "user", Label: "User(请求头 New-Api-User)", Type: "text", Plain: true},
-			{Key: "authorization", Label: "Authorization(请求头原值)", Type: "password"},
-		},
-		Build: func(creds map[string]string) Fetcher {
-			return NewNewAPIFetcher(creds["base_url"], creds["channel_id"], creds["user"], creds["authorization"])
 		},
 	},
 }

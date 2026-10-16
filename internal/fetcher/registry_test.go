@@ -7,7 +7,7 @@ func TestGetAll_ContainsTenProviders_InStableOrder(t *testing.T) {
 	if len(all) != 10 {
 		t.Fatalf("expected 10 providers, got %d", len(all))
 	}
-	want := []string{"kimi", "xfyun", "opencode-go", "mimo", "deepseek", "glm", "openrouter", "aliyun", "bailian", "new-api"}
+	want := []string{"kimi", "xfyun", "opencode-go", "mimo", "deepseek", "glm", "openrouter", "bailian", "new-api", "aliyun"}
 	for i, id := range want {
 		if all[i].ID != id {
 			t.Errorf("expected providers[%d].ID=%s, got %s", i, id, all[i].ID)

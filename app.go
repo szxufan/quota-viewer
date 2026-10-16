@@ -175,6 +175,7 @@ type ProviderInput struct {
 	Creds        map[string]string   `json:"creds"`         // 旧前端单凭证(兼容;优先使用 Keys)
 	Keys         []map[string]string `json:"keys"`          // 多组凭证(每组一套字段值)
 	KeyNames     []string            `json:"keyNames"`      // 各凭证组的显示名(与 Keys 对齐)
+	KeyAbbrs     []string            `json:"keyAbbrs"`      // 各凭证组的球格缩写(与 Keys 对齐;凭证即站点渠道生效)
 	Budgets      []float64           `json:"budgets"`       // 各凭证组的预算(与 Keys 对齐)
 	Budget       float64             `json:"budget"`        // 旧前端渠道级预算(兼容;忽略,由 Budgets 取代)
 	SyncExcludes []bool              `json:"sync_excludes"` // 各凭证组是否排除同步到 OSS(与 Keys 对齐)
@@ -247,6 +248,8 @@ func (a *App) GetConfig() map[string]interface{} {
 			"creds":          keys,
 			"keys":           keys,
 			"key_names":      pc.KeyNames,
+			"key_abbrs":      pc.KeyAbbrs,
+			"cred_as_site":   def.CredAsSite,
 			"budgets":        pc.Budgets,
 			"sync_excludes":  pc.SyncExcludes,
 		})
@@ -374,8 +377,9 @@ func (a *App) SaveConfig(providers []ProviderInput, refreshMin int) error {
 		// 掩码还原基准必须包含 Creds(旧版单凭证),否则旧数据会被掩码字面量覆盖
 		pc.Keys = mergeKeys(pc.CredKeys(), in.Keys, in.Creds, def.Fields)
 		pc.Creds = nil // 统一以 Keys 为单一数据源
-		// 凭证组显示名与 Keys 对齐;组数增加/删除时按顺序截断/补齐(空名 = 回退 "Key N")
-		pc.KeyNames = alignKeyNames(in.KeyNames, len(pc.Keys))
+		// 凭证组显示名/缩写与 Keys 对齐;组数增加/删除时按顺序截断/补齐(空 = 回退默认)
+		pc.KeyNames = alignKeyStrings(in.KeyNames, len(pc.Keys))
+		pc.KeyAbbrs = alignKeyStrings(in.KeyAbbrs, len(pc.Keys))
 		// 各凭证组的预算与 Keys 对齐(0 = 该组未设);旧渠道级预算字段废弃
 		pc.Budgets = config.AlignBudgets(in.Budgets, len(pc.Keys))
 		pc.Budget = 0
@@ -477,16 +481,16 @@ func mergeKeys(old []map[string]string, keys []map[string]string, creds map[stri
 	return out
 }
 
-// alignKeyNames 把前端提交的凭证组显示名与 Keys 对齐:
-// 保证返回 slice 与 keys 等长,不足补空(空名 = 详情页回退 "Key N"),超出截断。
-func alignKeyNames(names []string, n int) []string {
+// alignKeyStrings 把前端提交的按凭证组字符串列表(显示名/球格缩写)与 Keys 对齐:
+// 保证返回 slice 与 keys 等长,不足补空(空 = 回退默认展示),超出截断。
+func alignKeyStrings(vals []string, n int) []string {
 	out := make([]string, 0, n)
 	for i := 0; i < n; i++ {
-		var name string
-		if i < len(names) {
-			name = names[i]
+		var v string
+		if i < len(vals) {
+			v = vals[i]
 		}
-		out = append(out, name)
+		out = append(out, v)
 	}
 	return out
 }
@@ -729,6 +733,7 @@ func (a *App) fetchAll() []fetcher.QuotaResult {
 		providerID string
 		keyIdx     int
 		keyName    string
+		keyAbbr    string
 		creds      map[string]string
 	}
 	jobs := make([]job, 0)
@@ -745,11 +750,14 @@ func (a *App) fetchAll() []fetcher.QuotaResult {
 			}
 		}
 		for i, creds := range credsList {
-			name := ""
+			name, abbr := "", ""
 			if i < len(p.KeyNames) {
 				name = p.KeyNames[i]
 			}
-			jobs = append(jobs, job{providerID: p.ID, keyIdx: i, keyName: name, creds: creds})
+			if i < len(p.KeyAbbrs) {
+				abbr = p.KeyAbbrs[i]
+			}
+			jobs = append(jobs, job{providerID: p.ID, keyIdx: i, keyName: name, keyAbbr: abbr, creds: creds})
 		}
 	}
 
@@ -795,6 +803,16 @@ func (a *App) fetchAll() []fetcher.QuotaResult {
 				}
 				if r.Kind == "" {
 					r.Kind = fetcher.KindUsage
+				}
+				// 凭证即站点渠道(如 New API 中转站):以凭证名/缩写代替平台名/球格缩写,
+				// 让多个站点各自以自己的名字出现;缩写未配置时取凭证名前两字
+				if def.CredAsSite && j.keyName != "" {
+					r.Platform = j.keyName
+					if j.keyAbbr != "" {
+						r.Abbr = j.keyAbbr
+					} else if ab := fetcher.AbbrFromName(j.keyName); ab != "" {
+						r.Abbr = ab
+					}
 				}
 			}
 			jobResults[i] = rs

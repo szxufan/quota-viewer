@@ -15,6 +15,12 @@ test("formatCountdown: 多周期带周期标签前缀", () => {
     assert.equal(formatCountdown("2026-10-09T14:30:00Z", "5小时窗口", NOW), "距下次刷新(5小时窗口): 2时30分");
 });
 
+test("formatCountdown: kind=expire 时前缀为距过期", () => {
+    assert.equal(formatCountdown("2026-10-12T15:30:00Z", "", NOW, "expire"), "距过期: 3天3时30分");
+    assert.equal(formatCountdown("2026-10-09T14:30:00Z", "", NOW, "expire"), "距过期: 2时30分");
+    assert.equal(formatCountdown("2026-10-09T11:00:00Z", "", NOW, "expire"), "已过期");
+});
+
 test("formatCountdown: 已过期与非法时间", () => {
     assert.equal(formatCountdown("2026-10-09T11:00:00Z", "", NOW), "已过期");
     assert.equal(formatCountdown("2026-10-09T11:00:00Z", "周窗口", NOW), "周窗口: 已过期");
@@ -24,8 +30,8 @@ test("formatCountdown: 已过期与非法时间", () => {
 test("buildResetHtml: 多周期包在弹性行内(宽度足够时同行),带 data-period-label", () => {
     const html = buildResetHtml({
         period_resets: [
-            { label: "5小时窗口", reset_at: "2026-10-09T14:30:00Z" },
-            { label: "周窗口", reset_at: "2026-10-12T00:00:00Z" },
+            { label: "5小时窗口", reset_at: "2099-10-09T14:30:00Z" },
+            { label: "周窗口", reset_at: "2099-10-12T00:00:00Z" },
         ],
     });
     assert.ok(html.includes('class="quota-reset-row"'));
@@ -33,21 +39,29 @@ test("buildResetHtml: 多周期包在弹性行内(宽度足够时同行),带 dat
     assert.equal(matches.length, 2);
     assert.ok(html.includes('data-period-label="5小时窗口"'));
     assert.ok(html.includes('data-period-label="周窗口"'));
-    assert.ok(html.includes('data-reset-at="2026-10-09T14:30:00Z"'));
+    assert.ok(html.includes('data-reset-at="2099-10-09T14:30:00Z"'));
     assert.ok(html.includes("距下次刷新(5小时窗口)"));
     assert.ok(html.includes("距下次刷新(周窗口)"));
 });
 
 test("buildResetHtml: 单周期回退 reset_at,不带周期标签", () => {
-    const html = buildResetHtml({ reset_at: "2026-10-10T12:00:00Z" });
+    const html = buildResetHtml({ reset_at: "2099-10-10T12:00:00Z" });
     assert.ok(html.includes('class="quota-reset"'));
-    assert.ok(html.includes('data-reset-at="2026-10-10T12:00:00Z"'));
+    assert.ok(html.includes('data-reset-at="2099-10-10T12:00:00Z"'));
+    assert.ok(html.includes('data-reset-kind="refresh"'));
     assert.ok(!html.includes("data-period-label"));
     assert.ok(html.includes("距下次刷新:"));
 });
 
+test("buildResetHtml: reset_kind=expire 时输出距过期文案", () => {
+    const html = buildResetHtml({ reset_at: "2099-10-10T12:00:00Z", reset_kind: "expire" });
+    assert.ok(html.includes('data-reset-kind="expire"'));
+    assert.ok(html.includes("距过期:"));
+    assert.ok(!html.includes("距下次刷新"));
+});
+
 test("buildResetHtml: 错误或未知刷新时间返回空串", () => {
-    assert.equal(buildResetHtml({ error: "HTTP 401", reset_at: "2026-10-10T12:00:00Z" }), "");
+    assert.equal(buildResetHtml({ error: "HTTP 401", reset_at: "2099-10-10T12:00:00Z" }), "");
     assert.equal(buildResetHtml({}), "");
     assert.equal(buildResetHtml({ period_resets: [] }), "");
 });
@@ -56,7 +70,7 @@ test("buildResetHtml: period_resets 中缺 reset_at 的周期被过滤", () => {
     const html = buildResetHtml({
         period_resets: [
             { label: "5小时窗口", reset_at: "" },
-            { label: "周窗口", reset_at: "2026-10-12T00:00:00Z" },
+            { label: "周窗口", reset_at: "2099-10-12T00:00:00Z" },
         ],
     });
     const matches = html.match(/class="quota-reset"/g);
@@ -67,11 +81,11 @@ test("buildResetHtml: period_resets 中缺 reset_at 的周期被过滤", () => {
 test("buildResetHtml: period_resets 优先于 reset_at", () => {
     // 多周期渠道仍填 reset_at(主窗口)作兼容;前端应以 period_resets 为准
     const html = buildResetHtml({
-        reset_at: "2026-10-09T14:30:00Z",
-        period_resets: [{ label: "周窗口", reset_at: "2026-10-12T00:00:00Z" }],
+        reset_at: "2099-10-09T14:30:00Z",
+        period_resets: [{ label: "周窗口", reset_at: "2099-10-12T00:00:00Z" }],
     });
     const matches = html.match(/class="quota-reset"/g);
     assert.equal(matches.length, 1);
     assert.ok(html.includes('data-period-label="周窗口"'));
-    assert.ok(!html.includes('data-reset-at="2026-10-09T14:30:00Z"'));
+    assert.ok(!html.includes('data-reset-at="2099-10-09T14:30:00Z"'));
 });
