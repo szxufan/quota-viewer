@@ -129,10 +129,10 @@ function renderResults(results) {
     list.innerHTML = "";
 
     // 按 provider id 分组,组内按 key_index 排序。
-    // 凭证即站点渠道(如 New API,平台名被凭证名顶替)每个凭证独立成组,凭证名作组头
+    // 凭证即站点渠道(cred_as_site,如 New API)每个凭证独立成组,凭证名作组头
     const groups = new Map();
     results.forEach((r) => {
-        const own = r.key_name && r.key_name === r.platform;
+        const own = !!r.cred_as_site;
         const gk = own ? r.id + ":" + r.key_index : r.id;
         if (!groups.has(gk)) groups.set(gk, []);
         groups.get(gk).push(r);
@@ -172,8 +172,8 @@ function renderResults(results) {
             // 多周期渠道逐周期一行倒计时,单周期/无刷新时间由 buildResetHtml 内部回退
             const resetHtml = buildResetHtml(r);
             // 优先显示配置的凭证名,否则多 key 时回退 "Key N"(单 key 留空);
-            // 凭证名已作组头(凭证=平台名,如 New API)时不再重复标注
-            const keyLabel = (r.key_name && r.key_name === r.platform)
+            // 凭证名已作组头(凭证即站点渠道 cred_as_site)时不再重复标注
+            const keyLabel = r.cred_as_site
                 ? ""
                 : (r.key_name || (items.length > 1 ? "Key " + (ki + 1) : ""));
             const cell = document.createElement("div");
@@ -283,12 +283,12 @@ function updateBall(results) {
         });
     }
 
-    // 悬停 tooltip:凭证名与平台名相同(凭证即站点渠道)时不再重复拼接
+    // 悬停 tooltip:凭证即站点渠道(cred_as_site)的凭证名已顶替平台名,不再重复拼接
     ball.title = results
         .map((r) => {
-            const label = r.key_name
-                ? (r.key_name !== r.platform ? r.key_name : "")
-                : (r.key_index > 0 ? " Key " + (r.key_index + 1) : "");
+            const label = r.cred_as_site
+                ? ""
+                : (r.key_name || (r.key_index > 0 ? " Key " + (r.key_index + 1) : ""));
             return r.platform + label + ": " + (r.error || r.remaining || "未知");
         })
         .join("\n");

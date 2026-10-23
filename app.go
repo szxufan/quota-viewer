@@ -18,12 +18,12 @@ import (
 )
 
 type App struct {
-	ctx     context.Context
-	cfg     *config.Config
-	mu      sync.Mutex
-	cache   []fetcher.QuotaResult
-	tray    *tray.TrayHandler
-	visible atomic.Bool
+	ctx      context.Context
+	cfg      *config.Config
+	mu       sync.Mutex
+	cache    []fetcher.QuotaResult
+	tray     *tray.TrayHandler
+	visible  atomic.Bool
 	stopAuto chan struct{} // 当前自动刷新 goroutine 的停止信号(startAutoRefresh 重启时关闭旧的)
 
 	// 展开/收起窗口状态:savedX/savedY 记录展开前悬浮球位置
@@ -786,34 +786,8 @@ func (a *App) fetchAll() []fetcher.QuotaResult {
 					updates = append(updates, credUpdate{providerID: j.providerID, keyIdx: j.keyIdx, creds: r.UpdatedCreds})
 					updMu.Unlock()
 				}
-				// ID/Abbr/KeyName 仅在抓取器未自行设置时回填
-				// (多结果抓取器可为每条结果指定独立分组与缩写,如资源包按类型成组)
-				if r.ID == "" {
-					r.ID = def.ID
-				}
-				if r.Abbr == "" {
-					r.Abbr = def.Abbr
-				}
-				r.KeyIndex = j.keyIdx
-				if r.KeyName == "" {
-					r.KeyName = j.keyName
-				} else if j.keyName != "" {
-					// 凭证组名 + 子结果名(多账号场景区分账号)
-					r.KeyName = j.keyName + " · " + r.KeyName
-				}
-				if r.Kind == "" {
-					r.Kind = fetcher.KindUsage
-				}
-				// 凭证即站点渠道(如 New API 中转站):以凭证名/缩写代替平台名/球格缩写,
-				// 让多个站点各自以自己的名字出现;缩写未配置时取凭证名前两字
-				if def.CredAsSite && j.keyName != "" {
-					r.Platform = j.keyName
-					if j.keyAbbr != "" {
-						r.Abbr = j.keyAbbr
-					} else if ab := fetcher.AbbrFromName(j.keyName); ab != "" {
-						r.Abbr = ab
-					}
-				}
+				// 展示身份归一(与 internal/probe 探针同口径)
+				fetcher.SettleResult(r, def, j.keyIdx, j.keyName, j.keyAbbr)
 			}
 			jobResults[i] = rs
 		}(i, j, def)

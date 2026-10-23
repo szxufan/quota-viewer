@@ -18,19 +18,22 @@ type PeriodReset struct {
 
 // QuotaResult 是所有 fetcher 的统一返回结构。
 type QuotaResult struct {
-	Platform  string  `json:"platform"`  // 展示名("Kimi" / "讯飞星辰" / ...)
-	ID        string  `json:"id"`        // provider id(注册表,前端对齐球格)
-	Abbr      string  `json:"abbr"`      // 球格缩写("K" / "讯" / "Go" / ...)
-	Kind      string  `json:"kind"`      // "usage"(默认) / "balance"
-	KeyIndex  int     `json:"key_index"` // 该结果属于渠道的第几个凭证组(0 起);单凭证恒为 0
-	KeyName   string  `json:"key_name"`  // 凭证组显示名(配置中设置;空 = 前端回退 "Key N")
-	Used      float64 `json:"used"`      // 已用量
-	Total     float64 `json:"total"`     // 总量(平台返回则填,否则 0)
-	Percent   float64 `json:"percent"`   // Used/Total * 100;无总量时由剩余百分比反推
-	Balance   float64 `json:"balance"`   // 余额型 Provider 的原始余额数值(Kind=balance 时有效)
-	Currency  string  `json:"currency"`  // 余额货币代码(如 "CNY" / "USD")
-	Remaining string  `json:"remaining"` // 原始剩余描述(如 "1,200/18,000 次" 或 "无限制")
-	ResetAt   string  `json:"reset_at"`  // 下次重置时间(ISO 8601,空则未知)
+	Platform string `json:"platform"`  // 展示名("Kimi" / "讯飞星辰" / ...)
+	ID       string `json:"id"`        // provider id(注册表,前端对齐球格)
+	Abbr     string `json:"abbr"`      // 球格缩写("K" / "讯" / "Go" / ...)
+	Kind     string `json:"kind"`      // "usage"(默认) / "balance"
+	KeyIndex int    `json:"key_index"` // 该结果属于渠道的第几个凭证组(0 起);单凭证恒为 0
+	KeyName  string `json:"key_name"`
+	// CredAsSite 该结果来自"凭证即站点渠道"(如 New API):Platform/Abbr 已被
+	// 凭证名/缩写顶替,前端据此独立成组,无需回退比较 key_name 与 platform。
+	CredAsSite bool    `json:"cred_as_site,omitempty"` // 凭证组显示名(配置中设置;空 = 前端回退 "Key N")
+	Used       float64 `json:"used"`                   // 已用量
+	Total      float64 `json:"total"`                  // 总量(平台返回则填,否则 0)
+	Percent    float64 `json:"percent"`                // Used/Total * 100;无总量时由剩余百分比反推
+	Balance    float64 `json:"balance"`                // 余额型 Provider 的原始余额数值(Kind=balance 时有效)
+	Currency   string  `json:"currency"`               // 余额货币代码(如 "CNY" / "USD")
+	Remaining  string  `json:"remaining"`              // 原始剩余描述(如 "1,200/18,000 次" 或 "无限制")
+	ResetAt    string  `json:"reset_at"`               // 下次重置时间(ISO 8601,空则未知)
 	// ResetKind ResetAt 的事件语义:"expire" 表示该时间是额度过期作废(如资源包到期)
 	// 而非周期刷新;空值及其它值按刷新处理,前端据此显示"距过期"/"距下次刷新"。
 	ResetKind string `json:"reset_kind,omitempty"`

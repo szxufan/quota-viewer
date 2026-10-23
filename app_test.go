@@ -91,7 +91,7 @@ func TestSaveConfig_PackageTypesRoundTrip(t *testing.T) {
 func TestFilterSyncExcluded(t *testing.T) {
 	cfg := &config.Config{Providers: []config.ProviderConfig{
 		{ID: "kimi", SyncExcludes: []bool{false, true}}, // 组 1 排除
-		{ID: "deepseek"},                                // 未配置 → 全部同步
+		{ID: "deepseek"}, // 未配置 → 全部同步
 	}}
 	results := []fetcher.QuotaResult{
 		{ID: "kimi", KeyIndex: 0},
@@ -227,8 +227,8 @@ func TestFetchAll_CredAsSite(t *testing.T) {
 	a := &App{cfg: config.Default()}
 	// Default 只注册早期 5 渠道,new-api 需手动追加(与 SaveConfig 首次保存行为一致)
 	a.cfg.Providers = append(a.cfg.Providers, config.ProviderConfig{
-		ID:       "new-api",
-		Enabled:  true,
+		ID:      "new-api",
+		Enabled: true,
 		// 空 creds:Fetch 走参数校验快速返回错误,不发起网络请求
 		Keys:     []map[string]string{{}, {}, {}},
 		KeyNames: []string{"工作号", "AB 站", ""},
@@ -247,13 +247,14 @@ func TestFetchAll_CredAsSite(t *testing.T) {
 	}
 
 	cases := []struct {
-		idx      int
-		platform string
-		abbr     string
+		idx        int
+		platform   string
+		abbr       string
+		credAsSite bool
 	}{
-		{0, "工作号", "工作"}, // 缩写留空 → 取名称前两字
-		{1, "AB 站", "GW"}, // 显式配置缩写优先
-		{2, "New API", "NA"}, // 未命名凭证回退默认
+		{0, "工作号", "工作", true},      // 缩写留空 → 取名称前两字
+		{1, "AB 站", "GW", true},     // 显式配置缩写优先
+		{2, "New API", "NA", false}, // 未命名凭证回退默认,不置站点标记
 	}
 	for _, c := range cases {
 		r, ok := byKey[c.idx]
@@ -262,6 +263,16 @@ func TestFetchAll_CredAsSite(t *testing.T) {
 		}
 		if r.Platform != c.platform || r.Abbr != c.abbr {
 			t.Errorf("组 %d: platform=%q abbr=%q, want %q/%q", c.idx, r.Platform, r.Abbr, c.platform, c.abbr)
+		}
+		if r.CredAsSite != c.credAsSite {
+			t.Errorf("组 %d: cred_as_site = %v, want %v", c.idx, r.CredAsSite, c.credAsSite)
+		}
+	}
+
+	// 普通渠道即使凭证名恰与平台名相同也不得置站点标记
+	for _, r := range results {
+		if r.ID != "new-api" && r.CredAsSite {
+			t.Errorf("渠道 %s 不应置 cred_as_site", r.ID)
 		}
 	}
 
