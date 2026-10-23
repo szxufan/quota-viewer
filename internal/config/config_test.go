@@ -187,9 +187,12 @@ func TestLoad_MigrateLegacyJSON(t *testing.T) {
 	if keys := byID["mimo"].CredKeys(); len(keys) != 1 || keys[0]["cookie"] != "session=abc" {
 		t.Errorf("mimo creds should migrate to Keys: %+v", byID["mimo"])
 	}
+	// opencode-go 旧字段(workspace_id/session_token)对应的 Cookie 通道已废弃,
+	// 新接口走 API Key:旧凭证一律不迁移(provider 保持默认启用,凭证为空,
+	// 由 fetcher 自动读 OpenCode CLI 的 auth.json 或提示配置 API Key)
 	oc := byID["opencode-go"]
-	if !oc.Enabled || oc.CredKeys()[0]["workspace_id"] != "ws1" || oc.CredKeys()[0]["session_token"] != "tok1" {
-		t.Errorf("opencode-go migrate wrong: %+v", oc)
+	if len(oc.CredKeys()) != 0 {
+		t.Errorf("opencode-go dead legacy fields must not migrate: %+v", oc)
 	}
 	// deepseek 无旧字段 → 不启用
 	if byID["deepseek"].Enabled {

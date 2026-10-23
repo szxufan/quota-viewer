@@ -4,525 +4,413 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 )
 
-// TestOpenCodeGoFetcher_EmptySession_ReturnsError 验证空 sessionToken 返回错误。
-func TestOpenCodeGoFetcher_EmptySession_ReturnsError(t *testing.T) {
-	f := NewOpenCodeGoFetcher("ws-123", "")
-	result := f.Fetch()
-	if result.Error == "" {
-		t.Error("expected error for empty session token")
-	}
-	if result.Platform != "OpenCode Go" {
-		t.Errorf("expected platform 'OpenCode Go', got '%s'", result.Platform)
-	}
-}
-
-// TestOpenCodeGoFetcher_302_ReturnsSessionExpired 验证 302 跳转返回"会话已过期"。
-func TestOpenCodeGoFetcher_302_ReturnsSessionExpired(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Location", "https://opencode.ai/login")
-		w.WriteHeader(302)
-	}))
-	defer server.Close()
-
-	f := NewOpenCodeGoFetcher("ws-123", "tok_abc")
-	f.baseURL = server.URL
-	result := f.Fetch()
-	if !strings.Contains(result.Error, "会话已过期") {
-		t.Errorf("expected '会话已过期', got '%s'", result.Error)
-	}
-}
-
-// TestOpenCodeGoFetcher_303_ReturnsSessionExpired 验证 303 跳转也返回"会话已过期"。
-func TestOpenCodeGoFetcher_303_ReturnsSessionExpired(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Location", "https://opencode.ai/login")
-		w.WriteHeader(303)
-	}))
-	defer server.Close()
-
-	f := NewOpenCodeGoFetcher("ws-123", "tok_abc")
-	f.baseURL = server.URL
-	result := f.Fetch()
-	if !strings.Contains(result.Error, "会话已过期") {
-		t.Errorf("expected '会话已过期', got '%s'", result.Error)
-	}
-}
-
-// TestOpenCodeGoFetcher_401_ReturnsInvalidCredentials 验证 401 返回"凭据无效"。
-func TestOpenCodeGoFetcher_401_ReturnsInvalidCredentials(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(401)
-	}))
-	defer server.Close()
-
-	f := NewOpenCodeGoFetcher("ws-123", "tok_abc")
-	f.baseURL = server.URL
-	result := f.Fetch()
-	if !strings.Contains(result.Error, "凭据无效") {
-		t.Errorf("expected '凭据无效', got '%s'", result.Error)
-	}
-}
-
-// TestOpenCodeGoFetcher_403_ReturnsInvalidCredentials 验证 403 返回"凭据无效"。
-func TestOpenCodeGoFetcher_403_ReturnsInvalidCredentials(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(403)
-	}))
-	defer server.Close()
-
-	f := NewOpenCodeGoFetcher("ws-123", "tok_abc")
-	f.baseURL = server.URL
-	result := f.Fetch()
-	if !strings.Contains(result.Error, "凭据无效") {
-		t.Errorf("expected '凭据无效', got '%s'", result.Error)
-	}
-}
-
-// TestOpenCodeGoFetcher_404_ReturnsWorkspaceNotFound 验证 404 返回"Workspace 不存在"。
-func TestOpenCodeGoFetcher_404_ReturnsWorkspaceNotFound(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(404)
-	}))
-	defer server.Close()
-
-	f := NewOpenCodeGoFetcher("ws-999", "tok_abc")
-	f.baseURL = server.URL
-	result := f.Fetch()
-	if !strings.Contains(result.Error, "Workspace 不存在") {
-		t.Errorf("expected 'Workspace 不存在', got '%s'", result.Error)
-	}
-}
-
-// TestOpenCodeGoFetcher_SSRData_PicksHighestPercent 验证 SSR 数据解析正确,选择最高 usagePercent 的窗口。
-func TestOpenCodeGoFetcher_SSRData_PicksHighestPercent(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// 验证 Cookie 和 User-Agent
-		cookie := r.Header.Get("Cookie")
-		if !strings.Contains(cookie, "auth=tok_abc") {
-			t.Errorf("expected Cookie containing 'auth=tok_abc', got '%s'", cookie)
+// ocUsageJSON 拼出 /zen/go/v1/usage 的响应体:每个窗口的 JSON 片段由调用方给出,
+// 空片段表示该窗口在响应中缺失。
+func ocUsageJSON(rolling, weekly, monthly string) string {
+	var parts []string
+	for _, w := range []struct{ name, body string }{
+		{"rolling", rolling}, {"weekly", weekly}, {"monthly", monthly},
+	} {
+		if w.body != "" {
+			parts = append(parts, fmt.Sprintf("%q:%s", w.name, w.body))
 		}
-		ua := r.Header.Get("User-Agent")
-		if !strings.Contains(ua, "Mozilla") {
-			t.Errorf("expected User-Agent containing 'Mozilla', got '%s'", ua)
-		}
-		// 验证路径包含 workspaceID
-		if !strings.Contains(r.URL.Path, "ws-456") {
-			t.Errorf("expected path containing 'ws-456', got '%s'", r.URL.Path)
-		}
+	}
+	return `{"usage":{` + strings.Join(parts, ",") + `}}`
+}
 
-		w.Header().Set("Content-Type", "text/html")
-		html := `<!DOCTYPE html>
-<html>
-<head><title>Usage</title></head>
-<body>
-<script>
-  var data = {
-    rollingUsage:$R[10]={usagePercent:7,resetInSec:18000},
-    weeklyUsage:$R[11]={usagePercent:2,resetInSec:540000},
-    monthlyUsage:$R[12]={usagePercent:16,resetInSec:2480000}
-  };
-</script>
-</body>
-</html>`
-		w.Write([]byte(html))
+// ocWindow 拼出单个窗口的 JSON 片段。
+func ocWindow(percent string, resetsAt string) string {
+	body := `"status":"ok","percent":` + percent
+	if resetsAt != "" {
+		body += `,"resetsAt":` + resetsAt
+	}
+	return "{" + body + "}"
+}
+
+// newOCUsageServer 起一个 httptest 服务返回给定响应体,并校验请求契约
+// (Bearer 头、路径 /zen/go/v1/usage、User-Agent 头名与值)。
+func newOCUsageServer(t *testing.T, body string, status int) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/zen/go/v1/usage" {
+			t.Errorf("expected path /zen/go/v1/usage, got %s", r.URL.Path)
+		}
+		if !strings.HasPrefix(r.Header.Get("Authorization"), "Bearer ") {
+			t.Errorf("expected Authorization Bearer header, got %q", r.Header.Get("Authorization"))
+		}
+		// 头名与值都要钉死:只断言"某个 UA 头非空"时,把实现改成 X-User-Agent 仍会
+		// 通过(Go 的 http.Header.Get 不区分大小写,但换名后取值会落空 → 这里必须红)。
+		if got, want := r.Header.Get("User-Agent"), "quota-viewer/1.0"; got != want {
+			t.Errorf("expected User-Agent header %q, got %q", want, got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if status != 0 {
+			w.WriteHeader(status)
+		}
+		w.Write([]byte(body))
 	}))
+}
+
+// newOCFetcher 造一个凭证已注入、且不会读真实 home 的 fetcher。
+func newOCFetcher(t *testing.T, apiKey, baseURL string) *OpenCodeGoFetcher {
+	t.Helper()
+	f := NewOpenCodeGoFetcher(apiKey)
+	f.baseURL = baseURL
+	// 兜底隔离:即使实现读 home,也读不到真实凭证。
+	t.Setenv("USERPROFILE", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
+	return f
+}
+
+// 真机取回的三条窗口(percent 全 0)⇒ 选 rolling;ResetAt 截到秒精度;
+// Remaining 展示全部窗口;PeriodResets 逐窗口给出刷新时间。
+func TestOpenCodeGoFetcher_RealResponse_SelectsRollingAndTruncatesReset(t *testing.T) {
+	body := `{"usage":{"rolling":{"status":"ok","percent":0,"resetsAt":"2026-10-13T08:51:47.097Z"},` +
+		`"weekly":{"status":"ok","percent":0,"resetsAt":"2026-10-19T00:00:00.000Z"},` +
+		`"monthly":{"status":"ok","percent":0,"resetsAt":"2026-11-13T03:06:11.000Z"}}}`
+	server := newOCUsageServer(t, body, 200)
 	defer server.Close()
 
-	f := NewOpenCodeGoFetcher("ws-456", "tok_abc")
-	f.baseURL = server.URL
+	f := newOCFetcher(t, "oc_sk_test_key", server.URL)
 	result := f.Fetch()
+
 	if result.Error != "" {
 		t.Fatalf("unexpected error: %s", result.Error)
 	}
-	if result.Percent != 16 {
-		t.Errorf("expected Percent=16 (monthly highest), got %f", result.Percent)
-	}
-	if !strings.Contains(result.Remaining, "月窗口") {
-		t.Errorf("expected '月窗口' in Remaining, got '%s'", result.Remaining)
-	}
-	if !strings.Contains(result.Remaining, "5小时窗口") {
-		t.Errorf("expected '5小时窗口' also shown in Remaining, got '%s'", result.Remaining)
+	if result.Percent != 0 {
+		t.Errorf("expected Percent=0 (percent is already 0-100), got %f", result.Percent)
 	}
 	if result.Total != 100 {
 		t.Errorf("expected Total=100, got %f", result.Total)
 	}
-	// ResetAt 应为将来时间
-	_, err := time.Parse(time.RFC3339, result.ResetAt)
-	if err != nil {
-		t.Errorf("expected valid ISO time in ResetAt, got '%s': %v", result.ResetAt, err)
+	if result.Platform != "OpenCode Go" {
+		t.Errorf("expected Platform='OpenCode Go', got %q", result.Platform)
 	}
-	// 多周期:rolling/weekly/monthly 三个窗口的刷新时间均出现在 PeriodResets
+	// 全窗口展示:三行,每行一个窗口
+	for _, want := range []string{"5小时窗口 · 已用 0% · 剩余 100%", "周窗口 · 已用 0% · 剩余 100%", "月窗口 · 已用 0% · 剩余 100%"} {
+		if !strings.Contains(result.Remaining, want) {
+			t.Errorf("expected Remaining to contain %q, got %q", want, result.Remaining)
+		}
+	}
+	wantReset := "2026-10-13T08:51:47Z"
+	if result.ResetAt != wantReset {
+		t.Errorf("expected ResetAt=%q (UTC second precision), got %q", wantReset, result.ResetAt)
+	}
 	if len(result.PeriodResets) != 3 {
-		t.Fatalf("expected 3 PeriodResets, got %+v", result.PeriodResets)
+		t.Fatalf("expected 3 PeriodResets, got %d (%+v)", len(result.PeriodResets), result.PeriodResets)
 	}
-	wantLabels := []string{"5小时窗口", "周窗口", "月窗口"}
-	wantSecs := []int{18000, 540000, 2480000}
-	for i, p := range result.PeriodResets {
-		if p.Label != wantLabels[i] {
-			t.Errorf("PeriodResets[%d].Label = %q, want %q", i, p.Label, wantLabels[i])
-		}
-		got, err := time.Parse(time.RFC3339, p.ResetAt)
-		if err != nil {
-			t.Errorf("PeriodResets[%d].ResetAt not RFC3339: %q: %v", i, p.ResetAt, err)
-			continue
-		}
-		if diff := time.Until(got).Seconds() - float64(wantSecs[i]); diff < -5 || diff > 5 {
-			t.Errorf("PeriodResets[%d].ResetAt expected ≈ now+%ds, got %s", i, wantSecs[i], p.ResetAt)
-		}
+	if result.PeriodResets[0].Label != "5小时窗口" || result.PeriodResets[0].ResetAt != wantReset {
+		t.Errorf("unexpected first PeriodReset: %+v", result.PeriodResets[0])
+	}
+	if result.PeriodResets[1].Label != "周窗口" || result.PeriodResets[1].ResetAt != "2026-10-19T00:00:00Z" {
+		t.Errorf("unexpected weekly PeriodReset: %+v", result.PeriodResets[1])
 	}
 }
 
-// TestOpenCodeGoFetcher_SSRData_TiebreakerMonthlyWins 验证相同百分比时 rolling < weekly < monthly。
-func TestOpenCodeGoFetcher_SSRData_TiebreakerMonthlyWins(t *testing.T) {
-	// rolling=10%, weekly=5%, monthly=10% → monthly wins
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/html")
-		html := `<script>
-  rollingUsage:$R[1]={usagePercent:10,resetInSec:18000}
-  weeklyUsage:$R[2]={usagePercent:5,resetInSec:540000}
-  monthlyUsage:$R[3]={usagePercent:10,resetInSec:2480000}
-</script>`
-		w.Write([]byte(html))
-	}))
+// 选最大窗口;rolling 3.1 / weekly 43 / monthly 38.3 → weekly(43)。
+func TestOpenCodeGoFetcher_PicksMaxPercent(t *testing.T) {
+	body := ocUsageJSON(
+		ocWindow("3.1", `"2026-10-13T08:51:47Z"`),
+		ocWindow("43", `"2026-10-19T00:00:00Z"`),
+		ocWindow("38.3", `"2026-11-13T03:06:11Z"`),
+	)
+	server := newOCUsageServer(t, body, 200)
 	defer server.Close()
 
-	f := NewOpenCodeGoFetcher("ws-1", "tok_abc")
-	f.baseURL = server.URL
-	result := f.Fetch()
+	result := newOCFetcher(t, "key", server.URL).Fetch()
+	if result.Error != "" {
+		t.Fatalf("unexpected error: %s", result.Error)
+	}
+	if result.Percent != 43 {
+		t.Errorf("expected Percent=43 (weekly highest), got %f", result.Percent)
+	}
+	if !strings.Contains(result.Remaining, "周窗口 · 已用 43% · 剩余 57%") {
+		t.Errorf("expected weekly line in Remaining, got %q", result.Remaining)
+	}
+	if result.ResetAt != "2026-10-19T00:00:00Z" {
+		t.Errorf("expected ResetAt from weekly window, got %q", result.ResetAt)
+	}
+}
+
+// 同值时 rolling > weekly > monthly。
+func TestOpenCodeGoFetcher_TiePrefersRolling(t *testing.T) {
+	body := ocUsageJSON(
+		ocWindow("10", `"2026-10-13T08:51:47Z"`),
+		ocWindow("10", `"2026-10-19T00:00:00Z"`),
+		ocWindow("10", `"2026-11-13T03:06:11Z"`),
+	)
+	server := newOCUsageServer(t, body, 200)
+	defer server.Close()
+
+	result := newOCFetcher(t, "key", server.URL).Fetch()
 	if result.Error != "" {
 		t.Fatalf("unexpected error: %s", result.Error)
 	}
 	if result.Percent != 10 {
 		t.Errorf("expected Percent=10, got %f", result.Percent)
 	}
-	if !strings.Contains(result.Remaining, "月窗口") {
-		t.Errorf("expected '月窗口' in Remaining (monthly wins), got '%s'", result.Remaining)
-	}
-}
-
-// TestOpenCodeGoFetcher_SSRData_ReversedFieldOrder 验证 usagePercent 和 resetInSec 顺序调换也能解析。
-func TestOpenCodeGoFetcher_SSRData_ReversedFieldOrder(t *testing.T) {
-	// resetInSec 在前, usagePercent 在后
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/html")
-		html := `<script>
-  rollingUsage:$R[1]={resetInSec:18000,usagePercent:25}
-</script>`
-		w.Write([]byte(html))
-	}))
-	defer server.Close()
-
-	f := NewOpenCodeGoFetcher("ws-1", "tok_abc")
-	f.baseURL = server.URL
-	result := f.Fetch()
-	if result.Error != "" {
-		t.Fatalf("unexpected error: %s", result.Error)
-	}
-	if result.Percent != 25 {
-		t.Errorf("expected Percent=25, got %f", result.Percent)
-	}
 	if !strings.Contains(result.Remaining, "5小时窗口") {
-		t.Errorf("expected '5小时窗口' in Remaining, got '%s'", result.Remaining)
+		t.Errorf("expected rolling window label on tie, got %q", result.Remaining)
+	}
+	if result.ResetAt != "2026-10-13T08:51:47Z" {
+		t.Errorf("expected rolling ResetAt on tie, got %q", result.ResetAt)
 	}
 }
 
-// TestOpenCodeGoFetcher_DataSlot_Fallback 验证 SSR 匹配失败时回退到 data-slot HTML 解析(旧版紧凑结构兼容)。
-func TestOpenCodeGoFetcher_DataSlot_Fallback(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/html")
-		html := `<!DOCTYPE html>
-<html>
-<body>
-<div data-slot="usage-item"><span data-slot="usage-label">Rolling Usage</span><span data-slot="usage-value"><!--$-->7<!--/-->%</span></div>
-<div data-slot="usage-item"><span data-slot="usage-label">Weekly Usage</span><span data-slot="usage-value"><!--$-->2<!--/-->%</span></div>
-<div data-slot="usage-item"><span data-slot="usage-label">Monthly Usage</span><span data-slot="usage-value"><!--$-->16<!--/-->%</span></div>
-</body>
-</html>`
-		w.Write([]byte(html))
-	}))
+// 缺 weekly 字段仍出结果。
+func TestOpenCodeGoFetcher_MissingWeeklyStillSucceeds(t *testing.T) {
+	body := ocUsageJSON(ocWindow("3.1", `"2026-10-13T08:51:47Z"`), "", ocWindow("38.3", `"2026-11-13T03:06:11Z"`))
+	server := newOCUsageServer(t, body, 200)
 	defer server.Close()
 
-	f := NewOpenCodeGoFetcher("ws-789", "tok_abc")
-	f.baseURL = server.URL
-	result := f.Fetch()
+	result := newOCFetcher(t, "key", server.URL).Fetch()
 	if result.Error != "" {
 		t.Fatalf("unexpected error: %s", result.Error)
 	}
-	if result.Percent != 16 {
-		t.Errorf("expected Percent=16 (monthly highest), got %f", result.Percent)
+	if result.Percent != 38.3 {
+		t.Errorf("expected Percent=38.3 (monthly), got %f", result.Percent)
 	}
 	if !strings.Contains(result.Remaining, "月窗口") {
-		t.Errorf("expected '月窗口' in Remaining, got '%s', error=%s", result.Remaining, result.Error)
+		t.Errorf("expected 月窗口 in Remaining, got %q", result.Remaining)
 	}
 }
 
-// TestOpenCodeGoFetcher_NoData_ReturnsPageStructureChanged 验证无数据返回"页面结构已变化"。
-func TestOpenCodeGoFetcher_NoData_ReturnsPageStructureChanged(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/html")
-		w.Write([]byte(`<html><body>Welcome to OpenCode</body></html>`))
-	}))
+// 三窗口全缺 → 未找到有效配额窗口。
+func TestOpenCodeGoFetcher_NoWindows_ReturnsNoValidWindowError(t *testing.T) {
+	server := newOCUsageServer(t, `{"usage":{}}`, 200)
 	defer server.Close()
 
-	f := NewOpenCodeGoFetcher("ws-000", "tok_abc")
-	f.baseURL = server.URL
-	result := f.Fetch()
-	if !strings.Contains(result.Error, "页面结构已变化") {
-		t.Errorf("expected '页面结构已变化', got '%s'", result.Error)
+	result := newOCFetcher(t, "key", server.URL).Fetch()
+	if result.Error != "未找到有效配额窗口" {
+		t.Errorf("expected '未找到有效配额窗口', got %q", result.Error)
 	}
 }
 
-// TestOpenCodeGoFetcher_SSRData_AllZeroPercent_ReturnsZeroUsage 验证所有窗口 usagePercent=0(额度未使用)时
-// 仍返回有效结果:Percent=0,并按 tiebreaker 选取 monthly 窗口。
-func TestOpenCodeGoFetcher_SSRData_AllZeroPercent_ReturnsZeroUsage(t *testing.T) {
+// 边界:窗口存在但没有 percent 字段 → 同样算无效窗口。
+func TestOpenCodeGoFetcher_WindowsWithoutPercent_ReturnsNoValidWindowError(t *testing.T) {
+	server := newOCUsageServer(t, `{"usage":{"rolling":{"status":"ok","resetsAt":"2026-10-13T08:51:47Z"}}}`, 200)
+	defer server.Close()
+
+	result := newOCFetcher(t, "key", server.URL).Fetch()
+	if result.Error != "未找到有效配额窗口" {
+		t.Errorf("expected '未找到有效配额窗口', got %q", result.Error)
+	}
+}
+
+// 401 → API Key 无效。
+func TestOpenCodeGoFetcher_401_ReturnsInvalidAPIKey(t *testing.T) {
+	server := newOCUsageServer(t, `{"type":"error","error":{"type":"AuthError","message":"Unauthorized"}}`, 401)
+	defer server.Close()
+
+	result := newOCFetcher(t, "bad-key", server.URL).Fetch()
+	if result.Error != "API Key 无效" {
+		t.Errorf("expected 'API Key 无效', got %q", result.Error)
+	}
+}
+
+// 403 + EntitlementError → 未订阅文案。
+func TestOpenCodeGoFetcher_403_EntitlementError(t *testing.T) {
+	body := `{"type":"error","error":{"type":"EntitlementError","message":"OpenCode Go subscription required."}}`
+	server := newOCUsageServer(t, body, 403)
+	defer server.Close()
+
+	result := newOCFetcher(t, "old-sub-key", server.URL).Fetch()
+	if result.Error != "未订阅 OpenCode Go 套餐(或订阅已失效)" {
+		t.Errorf("expected 未订阅 文案, got %q", result.Error)
+	}
+}
+
+// 403 其他 body → API Key 无权限。
+func TestOpenCodeGoFetcher_403_OtherError(t *testing.T) {
+	for _, body := range []string{
+		`{"type":"error","error":{"type":"ForbiddenError","message":"no"}}`,
+		`not json at all`,
+	} {
+		server := newOCUsageServer(t, body, 403)
+		result := newOCFetcher(t, "key", server.URL).Fetch()
+		server.Close()
+		if result.Error != "API Key 无权限" {
+			t.Errorf("body=%s: expected 'API Key 无权限', got %q", body, result.Error)
+		}
+	}
+}
+
+// 500 → HTTP 500。
+func TestOpenCodeGoFetcher_HTTP500_ReturnsStatusCode(t *testing.T) {
+	server := newOCUsageServer(t, "Internal Server Error", 500)
+	defer server.Close()
+
+	result := newOCFetcher(t, "key", server.URL).Fetch()
+	if result.Error != "HTTP 500" {
+		t.Errorf("expected 'HTTP 500', got %q", result.Error)
+	}
+}
+
+// 200 但 body 不是 JSON → 解析失败文案。
+func TestOpenCodeGoFetcher_InvalidJSON_ReturnsParseError(t *testing.T) {
+	server := newOCUsageServer(t, "<html>not json</html>", 200)
+	defer server.Close()
+
+	result := newOCFetcher(t, "key", server.URL).Fetch()
+	if result.Error != "无法解析额度数据(响应结构可能已变化)" {
+		t.Errorf("expected 解析失败文案, got %q", result.Error)
+	}
+}
+
+// apiKey 非空 → 直接用,且不读 auth.json(用坏 auth.json 反证)。
+func TestOpenCodeGoFetcher_NonEmptyKey_DoesNotReadAuthFile(t *testing.T) {
+	var gotAuth string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/html")
-		html := `<script>
-  rollingUsage:$R[10]={status:"ok",resetInSec:1025,usagePercent:0}
-  weeklyUsage:$R[11]={status:"ok",resetInSec:568284,usagePercent:0}
-  monthlyUsage:$R[12]={status:"ok",resetInSec:2404927,usagePercent:0}
-</script>`
-		w.Write([]byte(html))
+		gotAuth = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(ocUsageJSON(ocWindow("7", `"2026-10-13T08:51:47Z"`), "", "")))
 	}))
 	defer server.Close()
 
-	f := NewOpenCodeGoFetcher("ws-1", "tok_abc")
-	f.baseURL = server.URL
+	dir := t.TempDir()
+	authPath := filepath.Join(dir, "auth.json")
+	if err := os.WriteFile(authPath, []byte(`{"opencode-go":{"type":"api","key":"from_auth_file"}}`), 0o600); err != nil {
+		t.Fatalf("write auth file: %v", err)
+	}
+
+	f := newOCFetcher(t, "field_key", server.URL)
+	f.authFile = authPath
 	result := f.Fetch()
+
 	if result.Error != "" {
 		t.Fatalf("unexpected error: %s", result.Error)
 	}
-	if result.Percent != 0 {
-		t.Errorf("expected Percent=0 (all windows unused), got %f", result.Percent)
-	}
-	if !strings.Contains(result.Remaining, "月窗口") {
-		t.Errorf("expected '月窗口' in Remaining (monthly wins tiebreaker), got '%s'", result.Remaining)
-	}
-}
-
-// TestOpenCodeGoFetcher_SSRData_ZeroPercent_NotPicked 验证 usagePercent=0 的窗口在存在更高用量窗口时不被选中。
-func TestOpenCodeGoFetcher_SSRData_ZeroPercent_NotPicked(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/html")
-		html := `<script>
-  rollingUsage:$R[10]={usagePercent:0,resetInSec:18000}
-  weeklyUsage:$R[11]={usagePercent:5,resetInSec:540000}
-</script>`
-		w.Write([]byte(html))
-	}))
-	defer server.Close()
-
-	f := NewOpenCodeGoFetcher("ws-1", "tok_abc")
-	f.baseURL = server.URL
-	result := f.Fetch()
-	if result.Error != "" {
-		t.Fatalf("unexpected error: %s", result.Error)
-	}
-	if result.Percent != 5 {
-		t.Errorf("expected Percent=5 (weekly, since rolling=0 is skipped), got %f", result.Percent)
-	}
-}
-
-// TestOpenCodeGoFetcher_NewPageFormat_ParsesNestedBlocks 验证新版 Dashboard 页面结构:
-// usage-item 块内含嵌套 div(usage-header/进度条),百分比夹在流式注释之间,
-// reset-time 输出英文重置短语。此前紧凑单行正则匹配失败导致"页面结构已变化"。
-func TestOpenCodeGoFetcher_NewPageFormat_ParsesNestedBlocks(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/html")
-		html := `<!DOCTYPE html>
-<html>
-<body>
-<div data-slot="usage-item">
-  <div data-slot="usage-header">
-    <span data-slot="usage-label">Rolling Usage</span>
-    <span data-slot="usage-value"><!--$-->42<!--/-->%</span>
-  </div>
-  <div data-slot="usage-progress"><div style="width: 42%;"></div></div>
-  <span data-slot="reset-time"><!--$-->Resets in <!--/-->2 hours 29 minutes</span>
-</div>
-<div data-slot="usage-item">
-  <div data-slot="usage-header">
-    <span data-slot="usage-label">Weekly Usage</span>
-    <span data-slot="usage-value"><!--$-->30<!--/-->%</span>
-  </div>
-  <div data-slot="usage-progress"><div style="width: 30%;"></div></div>
-  <span data-slot="reset-time"><!--$-->Resets in <!--/-->4 days 13 hours</span>
-</div>
-<div data-slot="usage-item">
-  <div data-slot="usage-header">
-    <span data-slot="usage-label">Monthly Usage</span>
-    <span data-slot="usage-value"><!--$-->17<!--/-->%</span>
-  </div>
-  <div data-slot="usage-progress"><div style="width: 17%;"></div></div>
-  <span data-slot="reset-time"><!--$-->Resets in <!--/-->28 days 22 hours</span>
-</div>
-</body>
-</html>`
-		w.Write([]byte(html))
-	}))
-	defer server.Close()
-
-	f := NewOpenCodeGoFetcher("ws-new", "tok_abc")
-	f.baseURL = server.URL
-	result := f.Fetch()
-	if result.Error != "" {
-		t.Fatalf("unexpected error: %s", result.Error)
-	}
-	if result.Percent != 42 {
-		t.Errorf("expected Percent=42 (rolling highest), got %f", result.Percent)
-	}
-	if !strings.Contains(result.Remaining, "5小时窗口") {
-		t.Errorf("expected '5小时窗口' in Remaining, got '%s'", result.Remaining)
-	}
-	if !strings.Contains(result.Remaining, "月窗口") {
-		t.Errorf("expected '月窗口' in Remaining, got '%s'", result.Remaining)
-	}
-	// 主窗口(rolling)的重置时间应来自 reset-time 短语: 2h29m = 8940s
-	wantReset := time.Now().Add(8940 * time.Second).Format("2006-01-02T15:04")
-	gotReset, err := time.Parse(time.RFC3339, result.ResetAt)
-	if err != nil {
-		t.Errorf("expected valid ISO time in ResetAt, got '%s': %v", result.ResetAt, err)
-	} else if gotReset.Format("2006-01-02T15:04") != wantReset {
-		t.Errorf("expected ResetAt≈%s (rolling +8940s), got %s", wantReset, result.ResetAt)
-	}
-}
-
-// TestOpenCodeGoFetcher_NewPageFormat_MissingResetTime 证明 reset-time 缺失时仍解析百分比。
-func TestOpenCodeGoFetcher_NewPageFormat_MissingResetTime(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/html")
-		html := `<div data-slot="usage-item">
-  <span data-slot="usage-label">Rolling Usage</span>
-  <span data-slot="usage-value"><!--$-->7<!--/-->%</span>
-</div>`
-		w.Write([]byte(html))
-	}))
-	defer server.Close()
-
-	f := NewOpenCodeGoFetcher("ws-1", "tok_abc")
-	f.baseURL = server.URL
-	result := f.Fetch()
-	if result.Error != "" {
-		t.Fatalf("unexpected error: %s", result.Error)
+	if gotAuth != "Bearer field_key" {
+		t.Errorf("expected field key to win, got %q", gotAuth)
 	}
 	if result.Percent != 7 {
 		t.Errorf("expected Percent=7, got %f", result.Percent)
 	}
-	// reset-time 未知(resetInSec=0)的窗口不进入 PeriodResets
-	if len(result.PeriodResets) != 0 {
-		t.Errorf("expected no PeriodResets when resetInSec unknown, got %+v", result.PeriodResets)
+}
+
+// apiKey 为空且 auth.json 有 opencode-go.key → 用文件里的 key。
+func TestOpenCodeGoFetcher_EmptyKey_ReadsAuthFile(t *testing.T) {
+	var gotAuth string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(ocUsageJSON(ocWindow("12", `"2026-10-13T08:51:47Z"`), "", "")))
+	}))
+	defer server.Close()
+
+	dir := t.TempDir()
+	authPath := filepath.Join(dir, "auth.json")
+	if err := os.WriteFile(authPath, []byte(`{"other":{"type":"oauth","key":"nope"},"opencode-go":{"type":"api","key":"auth_file_key"}}`), 0o600); err != nil {
+		t.Fatalf("write auth file: %v", err)
+	}
+
+	f := newOCFetcher(t, "", server.URL)
+	f.authFile = authPath
+	result := f.Fetch()
+
+	if result.Error != "" {
+		t.Fatalf("unexpected error: %s", result.Error)
+	}
+	if gotAuth != "Bearer auth_file_key" {
+		t.Errorf("expected key from auth.json, got %q", gotAuth)
 	}
 }
 
-// TestParseDurationToSec 覆盖 parseDurationToSec 的中/英时长短语解析。
-func TestParseDurationToSec(t *testing.T) {
+// auth.json 里没有 opencode-go / 文件不存在 / 内容不是 JSON → 未配置错误(不 panic)。
+func TestOpenCodeGoFetcher_EmptyKey_UnconfiguredCases(t *testing.T) {
+	const wantErr = "未配置 OpenCode Go API Key(在 opencode.ai 订阅后复制 API Key 填入,或在 opencode CLI 里 /connect 后自动读取)"
+
 	cases := []struct {
-		name   string
-		phrase string
-		want   int
+		name    string
+		content string // 空 = 不创建文件
 	}{
-		{"empty", "", 0},
-		{"hours and minutes", "2 hours 29 minutes", 8940},
-		{"minutes only", "45 minutes", 2700},
-		{"days only", "5 days", 432000},
-		{"seconds", "30 seconds", 30},
-		{"weeks", "1 week", 604800},
-		{"months", "1 month", 2592000},
-		{"zh minutes", "55 分钟", 3300},
-		{"zh days hours", "2 天 8 小时", 201600},
-		{"zh days only", "3 天", 259200},
-		{"zh mixed min", "1 小时 30 分", 5400},
-		{"zh weeks", "2 周", 1209600},
-		{"unrecognized", "soon", 0},
+		{name: "no_provider_entry", content: `{"some-other-provider":{"type":"api","key":"x"}}`},
+		{name: "provider_without_key", content: `{"opencode-go":{"type":"oauth"}}`},
+		{name: "missing_file", content: ""},
+		{name: "invalid_json", content: `{not json`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := parseDurationToSec(tc.phrase); got != tc.want {
-				t.Errorf("parseDurationToSec(%q) = %d, want %d", tc.phrase, got, tc.want)
+			authPath := filepath.Join(t.TempDir(), "auth.json")
+			if tc.content != "" {
+				if err := os.WriteFile(authPath, []byte(tc.content), 0o600); err != nil {
+					t.Fatalf("write auth file: %v", err)
+				}
+			}
+
+			f := newOCFetcher(t, "", "http://127.0.0.1:1") // 不发请求:应在发起前就报未配置
+			f.authFile = authPath
+			result := f.Fetch()
+
+			if result.Error != wantErr {
+				t.Errorf("expected 未配置 文案, got %q", result.Error)
+			}
+			if result.Platform != "OpenCode Go" {
+				t.Errorf("expected Platform='OpenCode Go', got %q", result.Platform)
 			}
 		})
 	}
 }
 
-// TestOpenCodeGoFetcher_RealPageFormat_ZhLocale 复刻 2026-09 真实页面结构:
-// 中文 label(oc_locale=zh)、小数百分比、中文重置短语、嵌套 div 块。
-func TestOpenCodeGoFetcher_RealPageFormat_ZhLocale(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/html")
-		html := `<div data-slot="usage"><div data-hk="x" data-slot="usage-item"><div data-slot="usage-header"><span data-slot="usage-label">5 小时用量</span><span data-slot="usage-value"><!--$-->13.6<!--/-->%</span></div><div data-slot="progress" role="progressbar" aria-label="5 小时用量" aria-valuemin="0" aria-valuemax="100" aria-valuenow="13.6"><div data-slot="progress-bar" style="width:13.6%"></div></div><span data-slot="reset-time"><!--$-->重置于<!--/--> <!--$-->55 分钟<!--/--></span></div><div data-slot="usage-item"><div data-slot="usage-header"><span data-slot="usage-label">每周用量</span><span data-slot="usage-value"><!--$-->40.6<!--/-->%</span></div><div data-slot="progress" role="progressbar" aria-label="每周用量" aria-valuenow="40.6"><div data-slot="progress-bar" style="width:40.6%"></div></div><span data-slot="reset-time"><!--$-->重置于<!--/--> <!--$-->2 天 8 小时<!--/--></span></div><div data-slot="usage-item"><div data-slot="usage-header"><span data-slot="usage-label">每月用量</span><span data-slot="usage-value"><!--$-->70.4<!--/-->%</span></div><div data-slot="progress" role="progressbar" aria-label="每月用量" aria-valuenow="70.4"><div data-slot="progress-bar" style="width:70.4%"></div></div><span data-slot="reset-time"><!--$-->重置于<!--/--> <!--$-->11 天 23 小时<!--/--></span></div></div>`
-		w.Write([]byte(html))
-	}))
-	defer server.Close()
+// resetsAt 缺失 / null / 不可解析 → ResetAt 留空串,PeriodResets 跳过该窗口,不影响选窗。
+func TestOpenCodeGoFetcher_MissingOrNullResetsAt_LeavesResetEmpty(t *testing.T) {
+	cases := map[string]string{
+		"null":    `{"status":"ok","percent":5,"resetsAt":null}`,
+		"absent":  `{"status":"ok","percent":5}`,
+		"invalid": `{"status":"ok","percent":5,"resetsAt":"not-a-time"}`,
+	}
+	for name, w := range cases {
+		t.Run(name, func(t *testing.T) {
+			server := newOCUsageServer(t, ocUsageJSON(w, "", ""), 200)
+			defer server.Close()
 
-	f := NewOpenCodeGoFetcher("ws-real", "tok_abc")
-	f.baseURL = server.URL
-	result := f.Fetch()
-	if result.Error != "" {
-		t.Fatalf("unexpected error: %s", result.Error)
-	}
-	if result.Percent != 70.4 {
-		t.Errorf("expected Percent=70.4 (monthly highest), got %v", result.Percent)
-	}
-	if !strings.Contains(result.Remaining, "5小时窗口") {
-		t.Errorf("expected '5小时窗口' in Remaining, got '%s'", result.Remaining)
-	}
-	if !strings.Contains(result.Remaining, "已用 13.6%") {
-		t.Errorf("expected '已用 13.6%%' (decimal) in Remaining, got '%s'", result.Remaining)
-	}
-	// 主窗口(monthly)重置短语 "11 天 23 小时" = 11*86400+23*3600 = 1033200s
-	gotReset, err := time.Parse(time.RFC3339, result.ResetAt)
-	if err != nil {
-		t.Errorf("expected valid ISO time in ResetAt, got '%s': %v", result.ResetAt, err)
-	} else {
-		wantReset := time.Now().Add(1033200 * time.Second)
-		if diff := gotReset.Sub(wantReset).Seconds(); diff < -5 || diff > 5 {
-			t.Errorf("expected ResetAt≈%v (monthly +1033200s), got %s", wantReset.Format(time.RFC3339), result.ResetAt)
-		}
+			result := newOCFetcher(t, "key", server.URL).Fetch()
+			if result.Error != "" {
+				t.Fatalf("unexpected error: %s", result.Error)
+			}
+			if result.Percent != 5 {
+				t.Errorf("expected Percent=5, got %f", result.Percent)
+			}
+			if result.ResetAt != "" {
+				t.Errorf("expected empty ResetAt, got %q", result.ResetAt)
+			}
+			if len(result.PeriodResets) != 0 {
+				t.Errorf("expected no PeriodResets, got %+v", result.PeriodResets)
+			}
+		})
 	}
 }
 
-// TestOpenCodeGoFetcher_SSRData_DecimalPercent 验证 SSR hydration 小数百分比解析。
-func TestOpenCodeGoFetcher_SSRData_DecimalPercent(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/html")
-		html := `<script>
-  rollingUsage:$R[34]={status:"ok",resetInSec:3343,usagePercent:13.6,usage:163280342,limit:1200000000},
-  weeklyUsage:$R[35]={status:"ok",resetInSec:202863,usagePercent:40.6,usage:1216622326,limit:3000000000},
-  monthlyUsage:$R[36]={status:"ok",resetInSec:1035425,usagePercent:70.4,usage:4221595316,limit:6000000000}
-</script>`
-		w.Write([]byte(html))
-	}))
-	defer server.Close()
+// 网络错误 → 请求失败文案(不 panic)。
+func TestOpenCodeGoFetcher_NetworkError(t *testing.T) {
+	server := newOCUsageServer(t, `{}`, 200)
+	url := server.URL
+	server.Close() // 关掉服务 → 连接失败
 
-	f := NewOpenCodeGoFetcher("ws-1", "tok_abc")
-	f.baseURL = server.URL
-	result := f.Fetch()
-	if result.Error != "" {
-		t.Fatalf("unexpected error: %s", result.Error)
-	}
-	if result.Percent != 70.4 {
-		t.Errorf("expected Percent=70.4 (monthly highest), got %v", result.Percent)
+	result := newOCFetcher(t, "key", url).Fetch()
+	if !strings.Contains(result.Error, "请求失败") {
+		t.Errorf("expected 请求失败 文案, got %q", result.Error)
 	}
 }
 
-// TestOpenCodeGoFetcher_HTTP500_ReturnsStatusCode 验证 500 返回通用错误。
-func TestOpenCodeGoFetcher_HTTP500_ReturnsStatusCode(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(500)
-		w.Write([]byte("Internal Server Error"))
-	}))
+// Fetch 结果字段与仓库惯例一致:用量型显式声明 Kind=KindUsage。
+func TestOpenCodeGoFetcher_ResultFields(t *testing.T) {
+	server := newOCUsageServer(t, ocUsageJSON(ocWindow("5", `"2026-10-13T08:51:47.097Z"`), "", ""), 200)
 	defer server.Close()
 
-	f := NewOpenCodeGoFetcher("ws-123", "tok_abc")
-	f.baseURL = server.URL
-	result := f.Fetch()
-	expected := fmt.Sprintf("HTTP %d", 500)
-	if result.Error != expected {
-		t.Errorf("expected '%s', got '%s'", expected, result.Error)
+	before := time.Now()
+	result := newOCFetcher(t, "key", server.URL).Fetch()
+	if result.LastUpdated.Before(before) {
+		t.Errorf("expected LastUpdated >= test start, got %v", result.LastUpdated)
+	}
+	if result.Kind != KindUsage {
+		t.Errorf("expected Kind=%q (explicitly declared), got %q", KindUsage, result.Kind)
 	}
 }

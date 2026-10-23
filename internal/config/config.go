@@ -12,7 +12,7 @@ type Config struct {
 	RefreshIntervalMin int              `json:"refresh_interval_min"`
 	BallX              int              `json:"ball_x"`
 	BallY              int              `json:"ball_y"`
-	Opacity            float64          `json:"opacity"` // 界面透明度 0.2-1.0,1.0 = 不透明
+	Opacity            float64          `json:"opacity"`    // 界面透明度 0.2-1.0,1.0 = 不透明
 	AutoStart          bool             `json:"auto_start"` // 开机自启动(Windows: HKCU Run 注册表键)
 	Sync               SyncConfig       `json:"sync,omitempty"`
 }
@@ -69,15 +69,15 @@ var AllProviderIDs = []string{"kimi", "xfyun", "opencode-go", "mimo", "deepseek"
 var DefaultProviderIDs = []string{"kimi", "xfyun", "opencode-go"}
 
 // legacyConfig 旧版扁平配置结构(仅用于 Load 时迁移)。
+// opencode_go_workspace_id / opencode_go_session_token 对应的 Cookie 通道已废弃,
+// 新接口走 API Key,旧字段不再读取(读取会残留无效凭证)。
 type legacyConfig struct {
-	KimiAPIKey             string `json:"kimi_api_key"`
-	XfyunCookie            string `json:"xfyun_cookie"`
-	MimoCookie             string `json:"mimo_cookie"`
-	OpenCodeGoWorkspaceID  string `json:"opencode_go_workspace_id"`
-	OpenCodeGoSessionToken string `json:"opencode_go_session_token"`
-	RefreshIntervalMin     int    `json:"refresh_interval_min"`
-	BallX                  int    `json:"ball_x"`
-	BallY                  int    `json:"ball_y"`
+	KimiAPIKey         string `json:"kimi_api_key"`
+	XfyunCookie        string `json:"xfyun_cookie"`
+	MimoCookie         string `json:"mimo_cookie"`
+	RefreshIntervalMin int    `json:"refresh_interval_min"`
+	BallX              int    `json:"ball_x"`
+	BallY              int    `json:"ball_y"`
 }
 
 func configDir() (string, error) {
@@ -255,15 +255,8 @@ func migrateFromLegacy(l legacyConfig) *Config {
 	set("kimi", l.KimiAPIKey != "", map[string]string{"api_key": l.KimiAPIKey})
 	set("xfyun", l.XfyunCookie != "", map[string]string{"cookie": l.XfyunCookie})
 	set("mimo", l.MimoCookie != "", map[string]string{"cookie": l.MimoCookie})
-
-	oc := map[string]string{}
-	if l.OpenCodeGoWorkspaceID != "" {
-		oc["workspace_id"] = l.OpenCodeGoWorkspaceID
-	}
-	if l.OpenCodeGoSessionToken != "" {
-		oc["session_token"] = l.OpenCodeGoSessionToken
-	}
-	set("opencode-go", len(oc) > 0, oc)
+	// opencode-go 旧字段(workspace_id/session_token)对应的 Cookie 通道已废弃,
+	// 新接口走 API Key(可自动读 OpenCode CLI 的 auth.json),旧凭证不迁移。
 
 	// 有凭证的 Provider 统一升级为 Keys 模型(单组),Creds 清空
 	for i := range cfg.Providers {
