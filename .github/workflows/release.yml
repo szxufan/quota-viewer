@@ -105,9 +105,13 @@ jobs:
         run: echo "VERSION=$(node -p "require('./wails.json').info.productVersion")" >> "$GITHUB_ENV"
 
       # wails 不会自动安装 NSIS(makensis 缺失时只警告并跳过安装包,
-      # 下面的产物断言会拦截),显式装上
+      # 下面的产物断言会拦截)。choco 只把 NSIS 写进注册表机器 PATH,
+      # Actions 后续步骤不会重读注册表 → 必须显式追加到 GITHUB_PATH
       - name: Install NSIS
-        run: choco install nsis -y --no-progress
+        shell: pwsh
+        run: |
+          choco install nsis -y --no-progress
+          Add-Content $env:GITHUB_PATH "${env:ProgramFiles(x86)}\NSIS"
 
       - name: Build installer + portable (wails build -nsis)
         shell: bash
