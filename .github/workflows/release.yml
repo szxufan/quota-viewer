@@ -39,20 +39,26 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Go tests
-        run: go test ./... -count=1
-
+      # frontend/dist 不入库(gitignore),但根包 go:embed all:frontend/dist
+      # 需要它才能编译 → 先构建前端产物再跑 Go 测试
       - uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
-      - name: Frontend tests
+      - name: Build frontend dist
         working-directory: frontend
         run: |
           npm ci
-          npm test
+          npm run build
+
+      - name: Go tests
+        run: go test ./... -count=1
+
+      - name: Frontend tests
+        working-directory: frontend
+        run: npm test
 
   build:
     name: Build & Release

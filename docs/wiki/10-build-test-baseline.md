@@ -76,5 +76,7 @@ wails dev
 
 ## Must NOT Change
 
-- `frontend/dist/` 与 `frontend/wailsjs/` 必须与源码同步提交（生成物也是交付物）
+- `frontend/dist/` 与 `frontend/wailsjs/` 不入库(.gitignore 生成物);在干净环境
+  （CI / 新 clone）跑 `go build ./...` 或 Go 测试前必须先 `cd frontend && npm ci && npm run build`
+  ——根包 `go:embed all:frontend/dist` 缺产物会编译失败（Release workflow 的 test job 已内置该步骤）
 - embed 指令 `all:frontend/dist` 不可去掉（否则 UI 丢失）
