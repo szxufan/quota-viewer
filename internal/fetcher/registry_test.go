@@ -2,12 +2,12 @@ package fetcher
 
 import "testing"
 
-func TestGetAll_ContainsTenProviders_InStableOrder(t *testing.T) {
+func TestGetAll_ContainsFifteenProviders_InStableOrder(t *testing.T) {
 	all := GetAll()
-	if len(all) != 10 {
-		t.Fatalf("expected 10 providers, got %d", len(all))
+	if len(all) != 15 {
+		t.Fatalf("expected 15 providers, got %d", len(all))
 	}
-	want := []string{"kimi", "xfyun", "opencode-go", "mimo", "deepseek", "glm", "openrouter", "bailian", "new-api", "aliyun"}
+	want := []string{"kimi", "xfyun", "opencode-go", "mimo", "deepseek", "glm", "openrouter", "bailian", "new-api", "aliyun", "ollama", "command-code", "factory-droid", "minimax", "open-design"}
 	for i, id := range want {
 		if all[i].ID != id {
 			t.Errorf("expected providers[%d].ID=%s, got %s", i, id, all[i].ID)
@@ -38,12 +38,12 @@ func TestGetAll_EachProvider_HasCompleteDefinition(t *testing.T) {
 }
 
 func TestGetAll_Build_ReturnsFetcherForEach(t *testing.T) {
+	// 隔离用户目录:空凭证 Build 不应读取真实用户凭证(auth.json/.env 回退)
+	// 也不应访问网络(各 fetcher 空凭证走"未配置"错误路径)。
+	t.Setenv("USERPROFILE", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
 	for _, d := range GetAll() {
-		creds := make(map[string]string)
-		for _, f := range d.Fields {
-			creds[f.Key] = "dummy-" + f.Key
-		}
-		f := d.Build(creds)
+		f := d.Build(map[string]string{})
 		if f == nil {
 			t.Errorf("provider %s Build returned nil", d.ID)
 		}

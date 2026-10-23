@@ -32,7 +32,7 @@ type ProviderDef struct {
 	// 有凭证名时以凭证名/缩写代替平台名/球格缩写展示,详情页按凭证逐条成组。
 	CredAsSite bool
 	Fields     []CredentialField
-	Build          func(creds map[string]string) Fetcher
+	Build      func(creds map[string]string) Fetcher
 }
 
 // registry 是全部已知 Provider 的注册表,顺序固定 = 推荐展示顺序。
@@ -186,6 +186,71 @@ var registry = []ProviderDef{
 			f := NewAliyunFetcher(creds["access_key_id"], creds["access_key_secret"])
 			f.packageTypes = ParseAliyunPackageTypes(creds["package_types"])
 			return f
+		},
+	},
+	{
+		ID:          "ollama",
+		DisplayName: "Ollama",
+		Abbr:        "O",
+		Kind:        KindUsage,
+		LoginURL:    "https://ollama.com/settings",
+		Fields: []CredentialField{
+			{Key: "cookie", Label: "Cookie(登录 ollama.com 后复制)", Type: "textarea"},
+		},
+		Build: func(creds map[string]string) Fetcher {
+			return NewOllamaFetcher(creds["cookie"])
+		},
+	},
+	{
+		ID:          "command-code",
+		DisplayName: "Command Code",
+		Abbr:        "C",
+		Kind:        KindUsage,
+		LoginURL:    "https://commandcode.ai/studio",
+		Fields: []CredentialField{
+			{Key: "api_key", Label: "API Key(留空自动读 ~/.commandcode/auth.json)", Type: "password"},
+		},
+		Build: func(creds map[string]string) Fetcher {
+			return NewCommandCodeFetcher(creds["api_key"])
+		},
+	},
+	{
+		ID:          "factory-droid",
+		DisplayName: "Factory Droid",
+		Abbr:        "F",
+		Kind:        KindUsage,
+		LoginURL:    "https://app.factory.ai/settings/api-keys",
+		Fields: []CredentialField{
+			{Key: "api_key", Label: "API Key(留空自动读 ~/.factory/.env)", Type: "password"},
+		},
+		Build: func(creds map[string]string) Fetcher {
+			return NewFactoryDroidFetcher(creds["api_key"])
+		},
+	},
+	{
+		ID:          "minimax",
+		DisplayName: "MiniMax",
+		Abbr:        "MX",
+		Kind:        KindUsage,
+		LoginURL:    "https://platform.minimaxi.com/console/plan",
+		Fields: []CredentialField{
+			{Key: "api_key", Label: "Token Plan Key(sk-cp- 开头订阅 Key)", Type: "password"},
+		},
+		Build: func(creds map[string]string) Fetcher {
+			return NewMiniMaxFetcher(creds["api_key"])
+		},
+	},
+	{
+		ID:          "open-design",
+		DisplayName: "Open Design",
+		Abbr:        "OD",
+		Kind:        KindUsage,
+		LoginURL:    "https://open-design.ai/cloud/dashboard",
+		Fields: []CredentialField{
+			{Key: "cookie", Label: "Cookie(登录 open-design.ai/cloud/dashboard 后 F12 复制)", Type: "textarea"},
+		},
+		Build: func(creds map[string]string) Fetcher {
+			return NewOpenDesignFetcher(creds["cookie"])
 		},
 	},
 }
