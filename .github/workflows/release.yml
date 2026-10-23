@@ -104,6 +104,11 @@ jobs:
         shell: bash
         run: echo "VERSION=$(node -p "require('./wails.json').info.productVersion")" >> "$GITHUB_ENV"
 
+      # wails 不会自动安装 NSIS(makensis 缺失时只警告并跳过安装包,
+      # 下面的产物断言会拦截),显式装上
+      - name: Install NSIS
+        run: choco install nsis -y --no-progress
+
       - name: Build installer + portable (wails build -nsis)
         shell: bash
         env:
