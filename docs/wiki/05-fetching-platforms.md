@@ -72,7 +72,7 @@ func Get(id string) (ProviderDef, bool)
 - 每个 fetcher 的 `baseURL`/`apiURL` 可重写（构造时传空用默认）——测试通过该参数注入 httptest server
 - OpenCode Go 抓取的是 Dashboard 页面（SSR hydration + data-slot 双模式解析）。2026-09 真机确认：SSR hydration（`rollingUsage:$R[n]={status:"ok",resetInSec:3343,usagePercent:13.6,usage:..,limit:..}`）**仍在**，是主解析路径，但 `usagePercent` 已改为**小数**（如 13.6）；data-slot 备选路径中 label 随 `oc_locale` 变化（中文 `5 小时用量`/`每周用量`/`每月用量`，英文 `Rolling Usage` 等），百分比带 SolidStart 流式注释，重置时间为 `reset-time` 内本地化短语（中文 `重置于 55 分钟`/`2 天 8 小时`，英文 `Resets in ...`），由 `parseDurationToSec`（中英单位）估算秒数，失败则 resetInSec=0
 - DeepSeek 是余额型：`Kind="balance"`，响应 `{"is_available":bool,"balance_infos":[{"currency","total_balance",...}]}`；取**第一条非零余额**的币种（如 USD $0.00 + CNY ¥247.51 → 显示 `余额 ¥247.51 (CNY)`）；`is_available=false` 或全部余额为 0 → Error
-- New API 是带余额的用量型：GET `{BaseUrl}/api/channel/{channel_id}`，请求头为 `New-Api-User: <User>` 和原始 `Authorization`；响应 `data.balance` 直接作为余额，`data.used_quota / 500000` 作为已用金额；`data` 缺失 → Error
+- New API 是带余额的用量型：GET `{BaseUrl}/api/channel/{channel_id}`，请求头为 `New-Api-User: <User>` 和原始 `Authorization`；响应 `data.balance` 直接作为余额，`data.used_quota / 500000` 作为已用金额；有重置时间的渠道额外返回 `balance_reset_next_time`（Unix 秒），填入 `ResetAt` 供前端显示倒计时（部分部署平铺在顶层而非 `data` 内，fetcher 两级兜底）；`data` 缺失 → Error
 - `format.go` 的 `formatNum` 做千分位展示格式化（仅内部使用）
 
 ### CLI 型抓取器（bailian，首个非 HTTP 实现）

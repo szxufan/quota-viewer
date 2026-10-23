@@ -34,11 +34,14 @@ func NewNewAPIFetcher(baseURL, channelID, user, authorization string) *NewAPIFet
 
 type newAPIChannelResponse struct {
 	Data *newAPIChannelData `json:"data"`
+	// BalanceResetNextTime 顶层兜底:部分部署把余额重置时间与 success/message 平铺返回
+	BalanceResetNextTime int64 `json:"balance_reset_next_time"`
 }
 
 type newAPIChannelData struct {
-	Balance   float64 `json:"balance"`
-	UsedQuota float64 `json:"used_quota"`
+	Balance              float64 `json:"balance"`
+	UsedQuota            float64 `json:"used_quota"`
+	BalanceResetNextTime int64   `json:"balance_reset_next_time"`
 }
 
 func (f *NewAPIFetcher) Fetch() QuotaResult {
@@ -114,6 +117,14 @@ func (f *NewAPIFetcher) Fetch() QuotaResult {
 	usedAmount := body.Data.UsedQuota / newAPIQuotaScale
 	result.Balance = body.Data.Balance
 	result.Used = usedAmount
+	// 部分部署把 balance_reset_next_time 平铺在顶层而非 data 内,两级都兜底
+	resetTs := body.Data.BalanceResetNextTime
+	if resetTs == 0 {
+		resetTs = body.BalanceResetNextTime
+	}
+	if resetTs > 0 {
+		result.ResetAt = time.Unix(resetTs, 0).Format(time.RFC3339)
+	}
 	// 进度 = 已用 / (余额+已用),与 Remaining 展示口径一致;
 	// 余额<=0(渠道未启用余额获取)时总量未知,保持 Percent=0,前端不绘制进度条
 	if body.Data.Balance > 0 {

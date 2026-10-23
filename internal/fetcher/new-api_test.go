@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestNewAPIFetcher_OK_ParsesBalanceAndUsedAmount(t *testing.T) {
@@ -24,7 +25,7 @@ func TestNewAPIFetcher_OK_ParsesBalanceAndUsedAmount(t *testing.T) {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"data":{"balance":12.34,"used_quota":12345}}`))
+		_, _ = w.Write([]byte(`{"data":{"balance":12.34,"used_quota":12345,"balance_reset_next_time":1730000000}}`))
 	}))
 	defer server.Close()
 
@@ -37,6 +38,10 @@ func TestNewAPIFetcher_OK_ParsesBalanceAndUsedAmount(t *testing.T) {
 	}
 	if result.Balance != 12.34 {
 		t.Errorf("expected Balance=12.34, got %f", result.Balance)
+	}
+	wantReset := time.Unix(1730000000, 0).Format(time.RFC3339)
+	if result.ResetAt != wantReset {
+		t.Errorf("expected ResetAt=%s, got %s", wantReset, result.ResetAt)
 	}
 	wantUsed := 12345 / newAPIQuotaScale
 	if math.Abs(result.Used-wantUsed) > 1e-9 {
@@ -55,7 +60,8 @@ func TestNewAPIFetcher_OK_ParsesBalanceAndUsedAmount(t *testing.T) {
 	}
 }
 
-// 余额<=0(渠道未启用余额获取)时总量未知,不计算进度,前端不绘制进度条
+// 余额<=0(渠道未启用余额获取)时总量未知,不计算进度,前端不绘制进度条;
+// 无重置时间的渠道不返回 balance_reset_next_time → ResetAt 为空
 func TestNewAPIFetcher_ZeroBalance_NoPercent(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -69,6 +75,27 @@ func TestNewAPIFetcher_ZeroBalance_NoPercent(t *testing.T) {
 	}
 	if result.Total != 0 || result.Percent != 0 {
 		t.Errorf("expected Total=0 Percent=0, got Total=%f Percent=%f", result.Total, result.Percent)
+	}
+	if result.ResetAt != "" {
+		t.Errorf("expected empty ResetAt, got %q", result.ResetAt)
+	}
+}
+
+// 部分部署把 balance_reset_next_time 与 success/message 平铺在顶层,兜底解析
+func TestNewAPIFetcher_TopLevelResetTime_Parsed(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"success":true,"message":"","data":{"balance":123.45,"used_quota":0},"balance_reset_next_time":1730000000}`))
+	}))
+	defer server.Close()
+
+	result := NewNewAPIFetcher(server.URL, "42", "alice", "Bearer token").Fetch()
+	if result.Error != "" {
+		t.Fatalf("unexpected error: %s", result.Error)
+	}
+	wantReset := time.Unix(1730000000, 0).Format(time.RFC3339)
+	if result.ResetAt != wantReset {
+		t.Errorf("expected ResetAt=%s, got %s", wantReset, result.ResetAt)
 	}
 }
 
