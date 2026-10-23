@@ -117,6 +117,6 @@ window.runtime.EventsOn("quota:update", (results) => render(results));
 ## Must NOT Change
 
 - 改 Go 方法签名后必须重新生成 wailsjs 绑定（`wails build` 自动），否则前端调用断裂
-- `TestConnection` 的 platform 字符串 = 注册表 id（"kimi"/"xfyun"/"opencode-go"/"mimo"/"deepseek"/"glm"/"openrouter"/"aliyun"/"bailian"/"new-api"），是前后端契约
+- `TestConnection` 的 platform 字符串 = 注册表 id（"kimi"/"xfyun"/"opencode-go"/"mimo"/"deepseek"/"glm"/"openrouter"/"bailian"/"new-api"/"aliyun"/"ollama"/"command-code"/"factory-droid"/"minimax"/"open-design"），是前后端契约
 - GetConfig 的 providers 数组结构（前端 main.js 渲染依赖）
 - SaveConfig 的钳制语义（0 个 → 全部启用;无上限）与 keys 合并语义（组数相同按索引合并,不同全量替换）

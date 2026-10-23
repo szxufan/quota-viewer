@@ -17,20 +17,33 @@
 | 配置模型 | `internal/config/config.go` | 205 | 动态 Provider 列表、Load/Save、旧格式迁移 |
 | Cookie 解析 | `internal/config/cookie.go` | 47 | PowerShell Cookie 粘贴 → 请求头格式 |
 | 配置测试 | `internal/config/config_test.go` | 225 | Load 默认值、Save 往返、旧格式迁移用例 |
-| 统一类型 | `internal/fetcher/types.go` | 31 | QuotaResult(含 ID/Abbr/Kind)+ Fetcher 接口 |
-| Provider 注册表 | `internal/fetcher/registry.go` | 99 | 五平台元数据 + Build 工厂 |
-| 数字格式化 | `internal/fetcher/format.go` | 24 | 千分位 formatNum |
+| 统一类型 | `internal/fetcher/types.go` | 71 | QuotaResult(含 KeyIndex/KeyName/CredAsSite/PeriodResets)+ Fetcher/MultiFetcher 接口 |
+| Provider 注册表 | `internal/fetcher/registry.go` | 273 | 十五平台元数据 + Build 工厂 |
+| 数字格式化/身份归一 | `internal/fetcher/format.go` | 72 | 千分位 formatNum、AbbrFromName、SettleResult(编排层与探针共用) |
 | Kimi 抓取器 | `internal/fetcher/kimi.go` | 196 | Kimi 开放平台额度 API |
 | Kimi 测试 | `internal/fetcher/kimi_test.go` | 137 | httptest 用例 |
 | 讯飞抓取器 | `internal/fetcher/xfyun.go` | 134 | 讯飞星辰额度 API |
 | 讯飞测试 | `internal/fetcher/xfyun_test.go` | 136 | httptest 用例 |
-| OpenCode 抓取器 | `internal/fetcher/opencode_go.go` | 233 | OpenCode Go 套餐滚动额度 |
+| OpenCode 抓取器 | `internal/fetcher/opencode_go.go` | 253 | OpenCode Go 官方 JSON API(/zen/go/v1/usage + API Key,auth.json 回退) |
 | OpenCode 测试 | `internal/fetcher/opencode_go_test.go` | 317 | httptest 用例 |
 | MiMo 抓取器 | `internal/fetcher/mimo.go` | 117 | 小米 MiMo 额度 API(恢复) |
 | MiMo 测试 | `internal/fetcher/mimo_test.go` | 136 | httptest 用例(恢复) |
 | DeepSeek 抓取器 | `internal/fetcher/deepseek.go` | 106 | DeepSeek 账户余额(余额型) |
 | DeepSeek 测试 | `internal/fetcher/deepseek_test.go` | 98 | httptest 用例 |
-| 注册表测试 | `internal/fetcher/registry_test.go` | 65 | 注册表完整性 |
+| Ollama 抓取器 | `internal/fetcher/ollama.go` | 242 | ollama.com/settings SSR 解析(30s 超时+重试) |
+| Ollama 测试 | `internal/fetcher/ollama_test.go` | - | httptest 用例 |
+| Command Code 抓取器 | `internal/fetcher/commandcode.go` | 204 | api.commandcode.ai /alpha/* 私有路由(auth.json 回退) |
+| Command Code 测试 | `internal/fetcher/commandcode_test.go` | - | httptest 用例 |
+| Factory Droid 抓取器 | `internal/fetcher/factorydroid.go` | 405 | api.factory.ai billing/limits(Core 接管/旧模型兜底,.env 回退) |
+| Factory Droid 测试 | `internal/fetcher/factorydroid_test.go` | - | httptest 用例(含 Core 接管表驱动) |
+| MiniMax 抓取器 | `internal/fetcher/minimax.go` | 259 | coding_plan/remains 多套餐卡(FetchMulti,域名回退链) |
+| MiniMax 测试 | `internal/fetcher/minimax_test.go` | - | httptest 用例 |
+| Open Design 抓取器 | `internal/fetcher/opendesign.go` | 239 | 控制面两步查询(302 禁跟随) |
+| Open Design 测试 | `internal/fetcher/opendesign_test.go` | - | httptest 用例 |
+| 注册表测试 | `internal/fetcher/registry_test.go` | 65 | 注册表完整性(空凭证 + 隔离用户目录) |
+| 无界面探针 | `internal/probe/probe.go` | 318 | --json 一行 JSON 契约与 CLI 入口逻辑(与 fetchAll 同口径编排) |
+| 探针测试 | `internal/probe/probe_test.go` | - | 契约/退出码/时间归一用例 |
+| CLI 入口 | `cmd/quotaviewer/main.go` | 14 | quota-viewer-cli.exe --json(console 子系统,不建窗口) |
 | 状态同步 | `internal/syncstate/` | - | 多机状态同步:载荷/AES-256-GCM 加解密/OSS 上传/公网下载 |
 | 同步编排 | `sync.go` | - | 发布(publishState)/订阅(fetchRemoteState)/凭证过滤/SaveSyncConfig/TestSync |
 | 系统托盘 | `internal/tray/tray.go` | 104 | 托盘菜单 + 事件转发 + LockOSThread |

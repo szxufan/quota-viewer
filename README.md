@@ -27,12 +27,30 @@ A desktop floating ball + AI platform quota monitoring tool: displays API quota 
 |----------|------------|----------|
 | Kimi | API Key (`sk-kimi-xxx`) | 5-hour window / weekly quota usage |
 | Xfyun (讯飞星辰) | Cookie | Package total usage |
-| OpenCode Go | Workspace ID + Session Token | Rolling window quota percentage |
+| OpenCode Go | API Key (blank = auto-read `~/.local/share/opencode/auth.json`) | Rolling / weekly / monthly window quota percentage |
 | Xiaomi MiMo | Cookie | Package token usage |
 | DeepSeek | API Key (`sk-...`) | Account balance (balance type) |
+| GLM | Token (+ optional Organization/Project ID) | Coding plan window usage |
+| OpenRouter | API Key (`sk-or-...`) | Credits usage |
+| Bailian (百炼) | bl CLI global login (credentialless) | Token plan usage |
 | New API | BaseUrl + channel_id + User + Authorization | Account balance and used amount |
+| Aliyun (阿里云) | AccessKey ID + Secret (+ optional resource packages) | Account balance / package usage |
+| Ollama Cloud | Cookie | Session (5h) / weekly usage |
+| Command Code | API Key (blank = auto-read `~/.commandcode/auth.json`) | 5h / weekly window + monthly credits |
+| Factory Droid | API Key (blank = auto-read `~/.factory/.env`) | Standard/Core 5h / weekly / monthly windows |
+| MiniMax | Token Plan Key (`sk-cp-...`) | Plan card usage (multi-card, one cell each) |
+| Open Design | Cookie | 5h / 7-day window usage |
 
 > Tip: For Cookie-based providers, you can paste the entire "Copy as PowerShell" script from your browser's F12 → Network tab, and it will be automatically parsed into a Cookie header on save.
+
+## Headless Probe (CLI)
+
+```bash
+go build -o quota-viewer-cli.exe ./cmd/quotaviewer
+./quota-viewer-cli.exe --json   # one round of fetches, single-line JSON to stdout, exit 0
+```
+
+Failure envelope: argument/config failures still print a valid single-line JSON (with the `error` field) and exit 0, plus a diagnostic line on stderr; missing/unknown args print usage to stderr and exit 2.
 
 ## Development
 

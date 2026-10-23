@@ -1,0 +1,153 @@
+# 发布流水线:推 v* 标签 → 测试 → Windows 构建 → GitHub Release。
+#
+# 触发与约定:
+#   - 版本号单一来源仍是 wails.json 的 info.productVersion(与本地 go run ./cmd/release 同源),
+#     推送标签时强制校验 tag(去 v 前缀)与 productVersion 一致,不一致直接失败;
+#   - 自动更新清单地址不写死在仓库里:配置仓库变量 UPDATE_MANIFEST_URL(Settings →
+#     Secrets and variables → Actions → Variables)后,构建时注入
+#     -X quota-viewer/internal/updater.ManifestURL=<url>;未配置则该构建不带自动更新
+#     (本地 OSS 发布通道 go run ./cmd/release 不受影响);
+#   - workflow_dispatch 手动触发只构建并上传 artifact,不创建 Release。
+#
+# 产物:
+#   - quota-viewer.exe                    便携版(GUI)
+#   - quota-viewer-amd64-installer.exe    NSIS 安装包(wails build -nsis)
+#   - quota-viewer-cli.exe                无界面探针(cmd/quotaviewer --json)
+#   - checksums.sha256                    以上产物的 SHA256
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  WAILS_VERSION: v2.13.0 # 与 go.mod 的 wails/v2 保持一致
+
+jobs:
+  test:
+    name: Test (Go + frontend)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Go tests
+        run: go test ./... -count=1
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Frontend tests
+        working-directory: frontend
+        run: |
+          npm ci
+          npm test
+
+  build:
+    name: Build & Release
+    needs: test
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install wails CLI
+        shell: bash
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@$WAILS_VERSION
+
+      - name: Add wails to PATH
+        shell: bash
+        run: echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
+
+      # 版本一致性:tag(去 v)= wails.json productVersion;手动触发跳过校验
+      - name: Verify tag matches wails.json version
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          JSON_VERSION="$(node -p "require('./wails.json').info.productVersion")"
+          if [ "$TAG_VERSION" != "$JSON_VERSION" ]; then
+            echo "::error::tag v$TAG_VERSION 与 wails.json productVersion $JSON_VERSION 不一致(版本号单一来源为 wails.json)"
+            exit 1
+          fi
+          echo "VERSION=$JSON_VERSION" >> "$GITHUB_ENV"
+
+      - name: Resolve version (manual run)
+        if: github.event_name == 'workflow_dispatch'
+        shell: bash
+        run: echo "VERSION=$(node -p "require('./wails.json').info.productVersion")" >> "$GITHUB_ENV"
+
+      - name: Build installer + portable (wails build -nsis)
+        shell: bash
+        env:
+          # 可选仓库变量:配置后该构建启用应用内自动更新(清单地址为公开 URL,放 Variables 而非 Secrets)
+          MANIFEST_URL: ${{ vars.UPDATE_MANIFEST_URL }}
+        run: |
+          LDFLAGS="-X main.Version=$VERSION"
+          if [ -n "$MANIFEST_URL" ]; then
+            LDFLAGS="$LDFLAGS -X quota-viewer/internal/updater.ManifestURL=$MANIFEST_URL"
+            echo "已注入自动更新清单地址"
+          else
+            echo "未配置 vars.UPDATE_MANIFEST_URL,该构建不带应用内自动更新"
+          fi
+          wails build -platform windows/amd64 -nsis -ldflags "$LDFLAGS"
+          test -f build/bin/quota-viewer.exe
+          test -f build/bin/quota-viewer-amd64-installer.exe
+
+      - name: Build CLI probe (quota-viewer-cli)
+        shell: bash
+        run: |
+          go build -ldflags "-X main.Version=$VERSION" -o build/bin/quota-viewer-cli.exe ./cmd/quotaviewer
+          build/bin/quota-viewer-cli.exe --json > /dev/null
+
+      - name: Generate checksums
+        shell: bash
+        working-directory: build/bin
+        run: |
+          sha256sum quota-viewer.exe quota-viewer-amd64-installer.exe quota-viewer-cli.exe > checksums.sha256
+          cat checksums.sha256
+
+      # 手动触发:只上传 artifact,不创建 Release
+      - name: Upload artifacts (manual run)
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: quota-viewer-windows-amd64
+          path: |
+            build/bin/quota-viewer.exe
+            build/bin/quota-viewer-amd64-installer.exe
+            build/bin/quota-viewer-cli.exe
+            build/bin/checksums.sha256
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: v${{ env.VERSION }}
+          generate_release_notes: true
+          files: |
+            build/bin/quota-viewer.exe
+            build/bin/quota-viewer-amd64-installer.exe
+            build/bin/quota-viewer-cli.exe
+            build/bin/checksums.sha256
