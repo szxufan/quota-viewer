@@ -14,6 +14,7 @@ import (
 	"quota-viewer/internal/updater"
 	"sync/atomic"
 
+	"github.com/wailsapp/wails/v2/pkg/options"
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
@@ -127,6 +128,17 @@ func (a *App) OnStartup(ctx context.Context) {
 // GetVersion 返回应用版本号(发布构建经 ldflags 注入,dev 构建为 "dev")。
 func (a *App) GetVersion() string {
 	return Version
+}
+
+// OnSecondInstanceLaunch 在已有实例运行时被再次启动的进程触发:
+// 唤起并前置已有实例的悬浮球,新进程随后由 Wails 自动退出。
+func (a *App) OnSecondInstanceLaunch(_ options.SecondInstanceData) {
+	ctx := a.ctx
+	if ctx == nil {
+		return // 已有实例尚未完成启动,直接让新进程退出
+	}
+	wailsruntime.WindowShow(ctx)
+	wailsruntime.WindowSetAlwaysOnTop(ctx, true)
 }
 
 // OnShutdown 在应用退出时清理托盘图标并停止显示器变化轮询。

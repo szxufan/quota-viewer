@@ -28,6 +28,11 @@ func main() {
 		BackgroundColour:  options.NewRGBA(0, 0, 0, 0),
 		AlwaysOnTop:       true,
 		HideWindowOnClose: true,
+		SingleInstanceLock: &options.SingleInstanceLock{
+			UniqueId: "quota-viewer-single-instance",
+			// 二次启动时唤起已有实例的悬浮球后,新进程自动退出
+			OnSecondInstanceLaunch: app.OnSecondInstanceLaunch,
+		},
 		DisableResize:     true,
 		WindowStartState:  options.Normal,
 		OnStartup:         app.OnStartup,
